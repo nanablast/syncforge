@@ -59,6 +59,26 @@
             {{ comparing ? 'Comparing...' : `🔍 Compare ${selectedTables.length} Table(s)` }}
           </button>
         </div>
+
+        <!-- Selected Tables List -->
+        <div class="selected-section" v-if="selectedTables.length > 0">
+          <div class="selected-header">
+            <span class="selected-title">Selected ({{ selectedTables.length }})</span>
+            <button class="btn-clear" @click="clearSelection">Clear All</button>
+          </div>
+          <div class="selected-list">
+            <span
+              v-for="(name, index) in selectedTables"
+              :key="name"
+              class="selected-tag"
+              @click="handleSelectedClick($event, name, index)"
+              @mousedown.prevent
+            >
+              {{ name }}
+              <span class="tag-remove">×</span>
+            </span>
+          </div>
+        </div>
       </div>
 
       <!-- Right Panel: Comparison Results -->
@@ -362,6 +382,37 @@ function toggleSelectAll() {
   }
 }
 
+function clearSelection() {
+  selectedTables.value = []
+  lastClickedIndex.value = null
+  lastSelectedClickIndex.value = null
+}
+
+// For selected tags shift-click
+const lastSelectedClickIndex = ref<number | null>(null)
+
+function handleSelectedClick(event: MouseEvent, name: string, index: number) {
+  const isShiftKey = event.shiftKey
+
+  if (isShiftKey && lastSelectedClickIndex.value !== null) {
+    // Shift+click: remove range
+    const start = Math.min(lastSelectedClickIndex.value, index)
+    const end = Math.max(lastSelectedClickIndex.value, index)
+    // Remove from end to start to avoid index shifting issues
+    for (let i = end; i >= start; i--) {
+      selectedTables.value.splice(i, 1)
+    }
+    lastSelectedClickIndex.value = null
+  } else {
+    // Normal click: remove single
+    const idx = selectedTables.value.indexOf(name)
+    if (idx !== -1) {
+      selectedTables.value.splice(idx, 1)
+    }
+    lastSelectedClickIndex.value = index
+  }
+}
+
 async function compareSelectedTables() {
   if (selectedTables.value.length === 0) return
 
@@ -615,6 +666,71 @@ async function executeSync() {
 .compare-actions {
   margin-top: 12px;
   flex-shrink: 0;
+}
+
+.selected-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.selected-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.selected-title {
+  color: #888;
+  font-size: 12px;
+}
+
+.btn-clear {
+  background: transparent;
+  border: none;
+  color: #f44336;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.btn-clear:hover {
+  text-decoration: underline;
+}
+
+.selected-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 80px;
+  overflow-y: auto;
+}
+
+.selected-tag {
+  background: rgba(79, 195, 247, 0.2);
+  color: #4fc3f7;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.selected-tag:hover {
+  background: rgba(244, 67, 54, 0.2);
+  color: #f44336;
+}
+
+.tag-remove {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .empty-results {
