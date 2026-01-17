@@ -49,12 +49,18 @@ jobs:
       - name: Build
         run: wails build -platform ${{ matrix.platform }} -o ${{ matrix.output }} ${{ runner.os == 'Linux' && '-tags webkit2_41' || '' }}
 
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        run: |
+          cd build/bin
+          zip -r skeema-gui-macos.zip *.app
+
       - name: Upload macOS artifact
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: skeema-gui-macos
-          path: build/bin/*.app
+          path: build/bin/skeema-gui-macos.zip
 
       - name: Upload Windows artifact
         if: runner.os == 'Windows'
