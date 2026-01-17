@@ -145,3 +145,15 @@ func (a *App) CheckForUpdates() (*updater.UpdateInfo, error) {
 func (a *App) OpenReleaseURL(url string) error {
 	return updater.OpenReleaseURL(url)
 }
+
+// DownloadAndApplyUpdate downloads and applies the update
+func (a *App) DownloadAndApplyUpdate(downloadURL string) error {
+	// Download the update
+	filePath, err := updater.DownloadUpdate(downloadURL, nil)
+	if err != nil {
+		return err
+	}
+
+	// Apply the update (this will exit the app and restart)
+	return updater.ApplyUpdate(filePath)
+}

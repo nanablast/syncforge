@@ -204,9 +204,12 @@
           </div>
         </div>
         <div class="dialog-footer">
-          <button class="btn btn-cancel" @click="showUpdateDialog = false">Later</button>
-          <button class="btn btn-primary" @click="openDownloadPage">
-            📥 Download Update
+          <button class="btn btn-cancel" @click="showUpdateDialog = false" :disabled="isUpdating">Later</button>
+          <button class="btn btn-secondary" @click="openDownloadPage" :disabled="isUpdating">
+            🌐 View Release
+          </button>
+          <button class="btn btn-primary" @click="applyUpdate" :disabled="isUpdating">
+            {{ isUpdating ? '⏳ Updating...' : '🚀 Install Update' }}
           </button>
         </div>
       </div>
@@ -220,7 +223,7 @@ import ConnectionForm from './components/ConnectionForm.vue'
 import DiffResults from './components/DiffResults.vue'
 import DataSync from './components/DataSync.vue'
 import TableBrowser from './components/TableBrowser.vue'
-import { TestConnection, GetDatabases, CompareSchemas, ExecuteSQL, GetAppVersion, CheckForUpdates, OpenReleaseURL } from '../wailsjs/go/main/App'
+import { TestConnection, GetDatabases, CompareSchemas, ExecuteSQL, GetAppVersion, CheckForUpdates, OpenReleaseURL, DownloadAndApplyUpdate } from '../wailsjs/go/main/App'
 import { database } from '../wailsjs/go/models'
 
 type ConnectionConfig = database.ConnectionConfig
@@ -242,6 +245,7 @@ const appVersion = ref('1.0.0')
 const updateInfo = ref<UpdateInfo | null>(null)
 const checkingUpdate = ref(false)
 const showUpdateDialog = ref(false)
+const isUpdating = ref(false)
 
 // Load version on mount
 ;(async () => {
@@ -486,6 +490,22 @@ async function openDownloadPage() {
     } catch (e: any) {
       alert('Failed to open download page: ' + e)
     }
+  }
+}
+
+async function applyUpdate() {
+  if (!updateInfo.value?.downloadUrl) {
+    alert('No download URL available')
+    return
+  }
+
+  isUpdating.value = true
+  try {
+    await DownloadAndApplyUpdate(updateInfo.value.downloadUrl)
+    // App will restart automatically
+  } catch (e: any) {
+    alert('Failed to apply update: ' + e)
+    isUpdating.value = false
   }
 }
 </script>
