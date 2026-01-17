@@ -1,89 +1,56 @@
 <template>
   <div class="app">
-    <header class="header">
-      <h1>🔄 Skeema GUI</h1>
-      <span class="subtitle">MySQL Schema & Data Sync Tool</span>
+    <!-- Top Bar -->
+    <header class="top-bar">
+      <div class="brand">
+        <h1>🔄 Skeema GUI</h1>
+      </div>
+      <div class="connection-status" @click="showConnectionDialog = true">
+        <template v-if="bothConnected">
+          <span class="status-badge connected">
+            <span class="status-dot"></span>
+            {{ sourceConfig.database }} ➜ {{ targetConfig.database }}
+          </span>
+        </template>
+        <template v-else>
+          <span class="status-badge disconnected">
+            <span class="status-dot"></span>
+            Click to connect
+          </span>
+        </template>
+        <button class="btn-settings">⚙️</button>
+      </div>
     </header>
 
-    <main class="main">
-      <!-- Connection Panel - Collapsed -->
-      <div class="connection-bar" v-if="bothConnected && isCollapsed" @click="isCollapsed = false">
-        <div class="connection-summary">
-          <span class="conn-badge source">
-            <span class="conn-icon">✓</span>
-            {{ sourceConfig.host }}:{{ sourceConfig.port }}/{{ sourceConfig.database }}
-          </span>
-          <span class="conn-arrow">➜</span>
-          <span class="conn-badge target">
-            <span class="conn-icon">✓</span>
-            {{ targetConfig.host }}:{{ targetConfig.port }}/{{ targetConfig.database }}
-          </span>
-        </div>
-        <button class="btn-expand" title="Expand">▼</button>
-      </div>
+    <!-- Tab Navigation -->
+    <nav class="tab-nav">
+      <button
+        class="tab"
+        :class="{ active: activeTab === 'schema' }"
+        @click="activeTab = 'schema'"
+      >
+        📋 Schema Compare
+      </button>
+      <button
+        class="tab"
+        :class="{ active: activeTab === 'data' }"
+        @click="activeTab = 'data'"
+      >
+        📊 Data Sync
+      </button>
+      <button
+        class="tab"
+        :class="{ active: activeTab === 'browser' }"
+        @click="activeTab = 'browser'"
+      >
+        🗂️ Table Browser
+      </button>
+    </nav>
 
-      <!-- Connection Panel - Expanded -->
-      <div class="connections" v-show="!isCollapsed">
-        <ConnectionForm
-          title="Source Database"
-          :config="sourceConfig"
-          :databases="sourceDatabases"
-          :loading="sourceLoading"
-          :connected="sourceConnected"
-          @update:config="sourceConfig = $event"
-          @test="testSourceConnection"
-          @load-databases="loadSourceDatabases"
-        />
-
-        <div class="arrow">➜</div>
-
-        <ConnectionForm
-          title="Target Database"
-          :config="targetConfig"
-          :databases="targetDatabases"
-          :loading="targetLoading"
-          :connected="targetConnected"
-          @update:config="targetConfig = $event"
-          @test="testTargetConnection"
-          @load-databases="loadTargetDatabases"
-        />
-
-        <button
-          v-if="bothConnected"
-          class="btn-collapse"
-          @click="isCollapsed = true"
-          title="Collapse"
-        >▲</button>
-      </div>
-
-      <!-- Tab Navigation -->
-      <div class="tabs">
-        <button
-          class="tab"
-          :class="{ active: activeTab === 'schema' }"
-          @click="activeTab = 'schema'"
-        >
-          📋 Schema Compare
-        </button>
-        <button
-          class="tab"
-          :class="{ active: activeTab === 'data' }"
-          @click="activeTab = 'data'"
-        >
-          📊 Data Sync
-        </button>
-        <button
-          class="tab"
-          :class="{ active: activeTab === 'browser' }"
-          @click="activeTab = 'browser'"
-        >
-          🗂️ Table Browser
-        </button>
-      </div>
-
+    <!-- Main Content Area -->
+    <main class="content">
       <!-- Schema Tab -->
-      <div v-show="activeTab === 'schema'">
-        <!-- Actions -->
+      <div class="tab-content" v-show="activeTab === 'schema'">
         <div class="actions">
           <button
             class="btn btn-primary"
@@ -94,7 +61,7 @@
           </button>
         </div>
 
-        <!-- Progress Log - Terminal Style -->
+        <!-- Terminal -->
         <div class="terminal" v-if="comparing || schemaLogs.length > 0">
           <div class="terminal-header">
             <span class="terminal-dot red"></span>
@@ -122,7 +89,6 @@
           </div>
         </div>
 
-        <!-- Results -->
         <DiffResults
           v-if="diffResults.length > 0"
           :results="diffResults"
@@ -130,14 +96,17 @@
           @execute="executeSQL"
         />
 
-        <!-- Empty State -->
         <div v-else-if="hasCompared" class="empty-state">
           ✅ No differences found. Schemas are identical.
+        </div>
+
+        <div v-else-if="!canCompare" class="empty-state hint">
+          Connect to both databases to compare schemas
         </div>
       </div>
 
       <!-- Data Sync Tab -->
-      <div v-show="activeTab === 'data'">
+      <div class="tab-content" v-show="activeTab === 'data'">
         <DataSync
           :source-config="sourceConfig"
           :target-config="targetConfig"
@@ -147,7 +116,7 @@
       </div>
 
       <!-- Table Browser Tab -->
-      <div v-show="activeTab === 'browser'">
+      <div class="tab-content" v-show="activeTab === 'browser'">
         <TableBrowser
           :config="browserTarget === 'source' ? sourceConfig : targetConfig"
           :connected="browserTarget === 'source' ? sourceConnected : targetConnected"
@@ -156,6 +125,46 @@
         />
       </div>
     </main>
+
+    <!-- Connection Dialog -->
+    <div class="dialog-overlay" v-if="showConnectionDialog" @click.self="closeConnectionDialog">
+      <div class="connection-dialog">
+        <div class="dialog-header">
+          <h2>Database Connections</h2>
+          <button class="btn-close" @click="closeConnectionDialog">×</button>
+        </div>
+        <div class="dialog-body">
+          <div class="connection-forms">
+            <ConnectionForm
+              title="Source Database"
+              :config="sourceConfig"
+              :databases="sourceDatabases"
+              :loading="sourceLoading"
+              :connected="sourceConnected"
+              @update:config="sourceConfig = $event"
+              @test="testSourceConnection"
+              @load-databases="loadSourceDatabases"
+            />
+
+            <div class="conn-arrow">➜</div>
+
+            <ConnectionForm
+              title="Target Database"
+              :config="targetConfig"
+              :databases="targetDatabases"
+              :loading="targetLoading"
+              :connected="targetConnected"
+              @update:config="targetConfig = $event"
+              @test="testTargetConnection"
+              @load-databases="loadTargetDatabases"
+            />
+          </div>
+        </div>
+        <div class="dialog-footer" v-if="bothConnected">
+          <button class="btn btn-primary" @click="closeConnectionDialog">Done</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -174,8 +183,8 @@ type DiffResult = database.DiffResult
 // Active tab
 const activeTab = ref<'schema' | 'data' | 'browser'>('schema')
 
-// Connection panel collapse state
-const isCollapsed = ref(false)
+// Connection dialog
+const showConnectionDialog = ref(true)
 
 // Browser target switch
 const browserTarget = ref<'source' | 'target'>('target')
@@ -216,7 +225,6 @@ interface LogEntry {
   time?: string
 }
 const schemaLogs = ref<LogEntry[]>([])
-const schemaProgress = ref(0)
 const currentStep = ref('')
 const dotIndex = ref(0)
 const terminalBody = ref<HTMLElement | null>(null)
@@ -252,7 +260,6 @@ function addSchemaLog(message: string, type: 'progress' | 'done' | 'error' = 'pr
 
 function clearSchemaLogs() {
   schemaLogs.value = []
-  schemaProgress.value = 0
   currentStep.value = ''
 }
 
@@ -269,6 +276,12 @@ const bothConnected = computed(() => {
          sourceConfig.value.database &&
          targetConfig.value.database
 })
+
+function closeConnectionDialog() {
+  if (bothConnected.value) {
+    showConnectionDialog.value = false
+  }
+}
 
 async function testSourceConnection() {
   sourceLoading.value = true
@@ -369,7 +382,6 @@ async function executeSQL(sql: string) {
   try {
     await ExecuteSQL(targetConfig.value, sql)
     alert('SQL executed successfully!')
-    // Re-compare after execution
     await compareSchemas()
   } catch (e: any) {
     alert('Execution failed: ' + e)
@@ -384,135 +396,136 @@ async function executeSQL(sql: string) {
   box-sizing: border-box;
 }
 
+html, body, #app {
+  height: 100%;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
   background: #1a1a2e;
   color: #eee;
-  min-height: 100vh;
 }
 
 .app {
-  min-height: 100vh;
-  padding: 20px;
-}
-
-.header {
-  text-align: center;
-  margin-bottom: 30px;
-}
-
-.header h1 {
-  font-size: 28px;
-  color: #4fc3f7;
-  margin-bottom: 5px;
-}
-
-.subtitle {
-  color: #888;
-  font-size: 14px;
-}
-
-.connections {
   display: flex;
-  gap: 20px;
-  align-items: flex-start;
-  justify-content: center;
-  margin-bottom: 20px;
-  position: relative;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
-.btn-collapse {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 50%;
-  background: #0f3460;
-  color: #4fc3f7;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-collapse:hover {
-  background: #1a4a7a;
-}
-
-/* Connection Bar (Collapsed) */
-.connection-bar {
+/* Top Bar */
+.top-bar {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  justify-content: center;
-  gap: 15px;
-  background: #16213e;
-  border-radius: 10px;
   padding: 12px 20px;
-  margin-bottom: 20px;
-  cursor: pointer;
-  transition: all 0.2s;
+  background: #16213e;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
 }
 
-.connection-bar:hover {
-  background: #1a2a4e;
+.brand h1 {
+  font-size: 20px;
+  color: #4fc3f7;
 }
 
-.connection-summary {
+.connection-status {
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 10px;
+  cursor: pointer;
 }
 
-.conn-badge {
+.status-badge {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
-  border-radius: 6px;
+  padding: 6px 14px;
+  border-radius: 20px;
   font-size: 13px;
-  font-family: 'Monaco', 'Menlo', monospace;
+  transition: all 0.2s;
 }
 
-.conn-badge.source {
+.status-badge.connected {
   background: rgba(76, 175, 80, 0.15);
   color: #81c784;
 }
 
-.conn-badge.target {
-  background: rgba(79, 195, 247, 0.15);
-  color: #4fc3f7;
+.status-badge.disconnected {
+  background: rgba(255, 152, 0, 0.15);
+  color: #ffb74d;
 }
 
-.conn-icon {
-  color: #4caf50;
+.status-badge:hover {
+  filter: brightness(1.2);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.btn-settings {
+  padding: 6px 10px;
+  border: none;
+  border-radius: 6px;
+  background: #0f3460;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-settings:hover {
+  background: #1a4a7a;
+}
+
+/* Tab Navigation */
+.tab-nav {
+  display: flex;
+  gap: 5px;
+  padding: 10px 20px;
+  background: #16213e;
+  flex-shrink: 0;
+}
+
+.tab {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #888;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab:hover {
+  color: #4fc3f7;
+  background: rgba(79, 195, 247, 0.1);
+}
+
+.tab.active {
+  background: #4fc3f7;
+  color: #1a1a2e;
   font-weight: bold;
 }
 
-.conn-arrow {
-  color: #4fc3f7;
-  font-size: 18px;
+/* Main Content */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
 }
 
-.btn-expand {
-  padding: 4px 10px;
-  border: none;
-  border-radius: 4px;
-  background: #0f3460;
-  color: #4fc3f7;
-  font-size: 10px;
-  cursor: pointer;
-}
-
-.arrow {
-  font-size: 32px;
-  color: #4fc3f7;
-  padding-top: 80px;
+.tab-content {
+  height: 100%;
 }
 
 .actions {
   text-align: center;
-  margin: 20px 0;
+  margin-bottom: 20px;
 }
 
 .btn {
@@ -543,37 +556,97 @@ body {
 
 .empty-state {
   text-align: center;
-  padding: 40px;
+  padding: 60px 20px;
   color: #4caf50;
   font-size: 18px;
 }
 
-.tabs {
-  display: flex;
-  gap: 10px;
-  justify-content: center;
-  margin-bottom: 20px;
+.empty-state.hint {
+  color: #888;
+  font-size: 16px;
 }
 
-.tab {
-  padding: 10px 24px;
+/* Connection Dialog */
+.dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.connection-dialog {
+  background: #1a1a2e;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 800px;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: #16213e;
+  border-bottom: 1px solid #333;
+}
+
+.dialog-header h2 {
+  color: #4fc3f7;
+  font-size: 18px;
+}
+
+.btn-close {
+  width: 32px;
+  height: 32px;
   border: none;
   border-radius: 6px;
-  background: #0f3460;
+  background: transparent;
   color: #888;
-  font-size: 14px;
+  font-size: 24px;
   cursor: pointer;
-  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.tab:hover {
+.btn-close:hover {
+  background: #333;
+  color: #fff;
+}
+
+.dialog-body {
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.connection-forms {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.conn-arrow {
+  font-size: 28px;
   color: #4fc3f7;
+  padding-top: 80px;
 }
 
-.tab.active {
-  background: #4fc3f7;
-  color: #1a1a2e;
-  font-weight: bold;
+.dialog-footer {
+  padding: 16px 20px;
+  background: #16213e;
+  border-top: 1px solid #333;
+  text-align: center;
 }
 
 /* Terminal Style */
