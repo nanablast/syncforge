@@ -183,6 +183,7 @@ const emit = defineEmits<{
   'test': []
   'load-databases': []
   'database-created': [dbName: string]
+  'auto-connect': []
 }>()
 
 // Create database dialog state
@@ -215,6 +216,10 @@ function loadSavedConnection() {
   const conn = savedConnections.value.find(c => c.name === selectedSaved.value)
   if (conn) {
     emit('update:config', { ...conn.config })
+    // Auto-connect after loading saved connection
+    setTimeout(() => {
+      emit('auto-connect')
+    }, 50)
   }
 }
 

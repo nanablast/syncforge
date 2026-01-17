@@ -134,6 +134,12 @@
           <button class="btn-close" @click="closeConnectionDialog">×</button>
         </div>
         <div class="dialog-body">
+          <!-- Connection Error Message -->
+          <div class="connection-error" v-if="connectionError">
+            <span class="error-icon">⚠️</span>
+            <span class="error-text">{{ connectionError }}</span>
+            <button class="btn-dismiss" @click="connectionError = ''">×</button>
+          </div>
           <div class="connection-forms">
             <ConnectionForm
               title="Source Database"
@@ -144,6 +150,7 @@
               @update:config="sourceConfig = $event"
               @test="testSourceConnection"
               @load-databases="loadSourceDatabases"
+              @auto-connect="testSourceConnection"
             />
 
             <div class="conn-arrow">➜</div>
@@ -157,6 +164,7 @@
               @update:config="targetConfig = $event"
               @test="testTargetConnection"
               @load-databases="loadTargetDatabases"
+              @auto-connect="testTargetConnection"
             />
           </div>
         </div>
@@ -185,6 +193,7 @@ const activeTab = ref<'schema' | 'data' | 'browser'>('schema')
 
 // Connection dialog
 const showConnectionDialog = ref(true)
+const connectionError = ref('')
 
 // Browser target switch
 const browserTarget = ref<'source' | 'target'>('target')
@@ -285,12 +294,13 @@ function closeConnectionDialog() {
 
 async function testSourceConnection() {
   sourceLoading.value = true
+  connectionError.value = ''
   try {
     await TestConnection(sourceConfig.value)
     sourceConnected.value = true
     await loadSourceDatabases()
   } catch (e: any) {
-    alert('Connection failed: ' + e)
+    connectionError.value = 'Source connection failed: ' + e
     sourceConnected.value = false
   } finally {
     sourceLoading.value = false
@@ -307,12 +317,13 @@ async function loadSourceDatabases() {
 
 async function testTargetConnection() {
   targetLoading.value = true
+  connectionError.value = ''
   try {
     await TestConnection(targetConfig.value)
     targetConnected.value = true
     await loadTargetDatabases()
   } catch (e: any) {
-    alert('Connection failed: ' + e)
+    connectionError.value = 'Target connection failed: ' + e
     targetConnected.value = false
   } finally {
     targetLoading.value = false
@@ -634,6 +645,45 @@ body {
   gap: 20px;
   align-items: flex-start;
   justify-content: center;
+}
+
+.connection-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: rgba(244, 67, 54, 0.15);
+  border: 1px solid rgba(244, 67, 54, 0.3);
+  border-radius: 8px;
+  color: #f44336;
+}
+
+.error-icon {
+  font-size: 18px;
+}
+
+.error-text {
+  flex: 1;
+  font-size: 13px;
+}
+
+.btn-dismiss {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #f44336;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-dismiss:hover {
+  background: rgba(244, 67, 54, 0.2);
 }
 
 .conn-arrow {
