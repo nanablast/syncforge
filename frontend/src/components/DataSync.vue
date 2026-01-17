@@ -535,6 +535,7 @@ async function executeSync() {
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  user-select: none;
 }
 
 .table-checkbox {
