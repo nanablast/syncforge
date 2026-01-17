@@ -4,8 +4,16 @@
     <header class="top-bar">
       <div class="brand">
         <h1>🔄 Skeema GUI</h1>
+        <span class="version">v{{ appVersion }}</span>
       </div>
-      <div class="connection-status" @click="showConnectionDialog = true">
+      <div class="top-actions">
+        <button class="btn-update" @click="checkForUpdates" :disabled="checkingUpdate" v-if="!updateInfo?.available">
+          {{ checkingUpdate ? 'Checking...' : '🔄 Check Updates' }}
+        </button>
+        <button class="btn-update has-update" @click="showUpdateDialog = true" v-else>
+          🎉 Update Available: v{{ updateInfo.latestVersion }}
+        </button>
+        <div class="connection-status" @click="showConnectionDialog = true">
         <template v-if="bothConnected">
           <span class="status-badge connected">
             <span class="status-dot"></span>
@@ -19,6 +27,7 @@
           </span>
         </template>
         <button class="btn-settings">⚙️</button>
+        </div>
       </div>
     </header>
 
@@ -173,6 +182,35 @@
         </div>
       </div>
     </div>
+
+    <!-- Update Dialog -->
+    <div class="dialog-overlay" v-if="showUpdateDialog" @click.self="showUpdateDialog = false">
+      <div class="update-dialog">
+        <div class="dialog-header">
+          <h2>🎉 Update Available</h2>
+          <button class="btn-close" @click="showUpdateDialog = false">×</button>
+        </div>
+        <div class="dialog-body">
+          <div class="update-info">
+            <div class="version-compare">
+              <span class="current">v{{ updateInfo?.currentVersion }}</span>
+              <span class="arrow">➜</span>
+              <span class="latest">v{{ updateInfo?.latestVersion }}</span>
+            </div>
+            <div class="release-notes" v-if="updateInfo?.releaseNotes">
+              <h4>Release Notes</h4>
+              <div class="notes-content">{{ updateInfo.releaseNotes }}</div>
+            </div>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn btn-cancel" @click="showUpdateDialog = false">Later</button>
+          <button class="btn btn-primary" @click="openDownloadPage">
+            📥 Download Update
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -182,11 +220,37 @@ import ConnectionForm from './components/ConnectionForm.vue'
 import DiffResults from './components/DiffResults.vue'
 import DataSync from './components/DataSync.vue'
 import TableBrowser from './components/TableBrowser.vue'
-import { TestConnection, GetDatabases, CompareSchemas, ExecuteSQL } from '../wailsjs/go/main/App'
+import { TestConnection, GetDatabases, CompareSchemas, ExecuteSQL, GetAppVersion, CheckForUpdates, OpenReleaseURL } from '../wailsjs/go/main/App'
 import { database } from '../wailsjs/go/models'
 
 type ConnectionConfig = database.ConnectionConfig
 type DiffResult = database.DiffResult
+
+interface UpdateInfo {
+  available: boolean
+  currentVersion: string
+  latestVersion: string
+  releaseNotes: string
+  downloadUrl: string
+  releaseUrl: string
+  assetName: string
+  assetSize: number
+}
+
+// App version and updates
+const appVersion = ref('1.0.0')
+const updateInfo = ref<UpdateInfo | null>(null)
+const checkingUpdate = ref(false)
+const showUpdateDialog = ref(false)
+
+// Load version on mount
+;(async () => {
+  try {
+    appVersion.value = await GetAppVersion()
+  } catch (e) {
+    console.error('Failed to get app version:', e)
+  }
+})()
 
 // Active tab
 const activeTab = ref<'schema' | 'data' | 'browser'>('schema')
@@ -396,6 +460,32 @@ async function executeSQL(sql: string) {
     await compareSchemas()
   } catch (e: any) {
     alert('Execution failed: ' + e)
+  }
+}
+
+async function checkForUpdates() {
+  checkingUpdate.value = true
+  try {
+    const info = await CheckForUpdates()
+    updateInfo.value = info as UpdateInfo
+    if (!info?.available) {
+      alert('You are running the latest version!')
+    }
+  } catch (e: any) {
+    alert('Failed to check for updates: ' + e)
+  } finally {
+    checkingUpdate.value = false
+  }
+}
+
+async function openDownloadPage() {
+  if (updateInfo.value?.releaseUrl) {
+    try {
+      await OpenReleaseURL(updateInfo.value.releaseUrl)
+      showUpdateDialog.value = false
+    } catch (e: any) {
+      alert('Failed to open download page: ' + e)
+    }
   }
 }
 </script>
@@ -802,5 +892,136 @@ body {
 @keyframes blink {
   0%, 50% { opacity: 1; }
   51%, 100% { opacity: 0; }
+}
+
+/* Version and Update Styles */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.version {
+  font-size: 12px;
+  color: #888;
+  background: rgba(79, 195, 247, 0.1);
+  padding: 3px 8px;
+  border-radius: 10px;
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-update {
+  padding: 6px 14px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #0f3460;
+  color: #4fc3f7;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-update:hover:not(:disabled) {
+  background: #1a4a7a;
+}
+
+.btn-update:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-update.has-update {
+  background: rgba(76, 175, 80, 0.15);
+  border-color: #4caf50;
+  color: #81c784;
+  animation: pulse 2s infinite;
+}
+
+.btn-update.has-update:hover {
+  background: rgba(76, 175, 80, 0.25);
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(76, 175, 80, 0); }
+}
+
+/* Update Dialog */
+.update-dialog {
+  background: #1a1a2e;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.update-info {
+  text-align: center;
+}
+
+.version-compare {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  font-size: 20px;
+  margin-bottom: 20px;
+}
+
+.version-compare .current {
+  color: #888;
+}
+
+.version-compare .arrow {
+  color: #4fc3f7;
+}
+
+.version-compare .latest {
+  color: #4caf50;
+  font-weight: bold;
+}
+
+.release-notes {
+  text-align: left;
+  background: #0f0f23;
+  border-radius: 8px;
+  padding: 15px;
+  margin-top: 15px;
+}
+
+.release-notes h4 {
+  color: #4fc3f7;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.notes-content {
+  color: #ccc;
+  font-size: 13px;
+  line-height: 1.6;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.btn-cancel {
+  padding: 10px 20px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: transparent;
+  color: #888;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.btn-cancel:hover {
+  background: #333;
 }
 </style>

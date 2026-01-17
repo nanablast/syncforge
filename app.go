@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"skeema-gui/database"
+	"skeema-gui/updater"
 )
 
 // App struct
@@ -128,4 +129,19 @@ func (a *App) DeleteConnection(name string) error {
 		return nil
 	}
 	return a.connectionStore.Delete(name)
+}
+
+// GetAppVersion returns the current app version
+func (a *App) GetAppVersion() string {
+	return updater.GetCurrentVersion()
+}
+
+// CheckForUpdates checks for available updates
+func (a *App) CheckForUpdates() (*updater.UpdateInfo, error) {
+	return updater.CheckForUpdates()
+}
+
+// OpenReleaseURL opens the release page in browser
+func (a *App) OpenReleaseURL(url string) error {
+	return updater.OpenReleaseURL(url)
 }
