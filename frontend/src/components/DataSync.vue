@@ -342,9 +342,9 @@ function toggleTableSelection(table: TableDataInfo) {
   }
   const index = selectedTables.value.indexOf(table.tableName)
   if (index === -1) {
-    selectedTables.value.push(table.tableName)
+    selectedTables.value = [...selectedTables.value, table.tableName]
   } else {
-    selectedTables.value.splice(index, 1)
+    selectedTables.value = selectedTables.value.filter(n => n !== table.tableName)
   }
 }
 
@@ -361,11 +361,15 @@ function handleTableClick(event: MouseEvent | Event, table: TableDataInfo, index
     const start = Math.min(lastClickedIndex.value, index)
     const end = Math.max(lastClickedIndex.value, index)
 
+    const newSelections: string[] = []
     for (let i = start; i <= end; i++) {
       const t = tables.value[i]
       if (t.primaryKeys.length > 0 && !selectedTables.value.includes(t.tableName)) {
-        selectedTables.value.push(t.tableName)
+        newSelections.push(t.tableName)
       }
+    }
+    if (newSelections.length > 0) {
+      selectedTables.value = [...selectedTables.value, ...newSelections]
     }
   } else {
     // Normal click: toggle single selection
@@ -398,17 +402,11 @@ function handleSelectedClick(event: MouseEvent, name: string, index: number) {
     // Shift+click: remove range
     const start = Math.min(lastSelectedClickIndex.value, index)
     const end = Math.max(lastSelectedClickIndex.value, index)
-    // Remove from end to start to avoid index shifting issues
-    for (let i = end; i >= start; i--) {
-      selectedTables.value.splice(i, 1)
-    }
+    selectedTables.value = selectedTables.value.filter((_, i) => i < start || i > end)
     lastSelectedClickIndex.value = null
   } else {
     // Normal click: remove single
-    const idx = selectedTables.value.indexOf(name)
-    if (idx !== -1) {
-      selectedTables.value.splice(idx, 1)
-    }
+    selectedTables.value = selectedTables.value.filter(n => n !== name)
     lastSelectedClickIndex.value = index
   }
 }
