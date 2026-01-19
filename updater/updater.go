@@ -280,7 +280,9 @@ rm "$0"
 
 	// Run update script and exit
 	cmd := exec.Command("bash", scriptPath)
-	cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start update script: %v", err)
+	}
 
 	// Give script time to start
 	time.Sleep(500 * time.Millisecond)
@@ -312,7 +314,9 @@ del "%%~f0"
 
 	// Run update script and exit
 	cmd := exec.Command("cmd", "/c", "start", "/b", scriptPath)
-	cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start update script: %v", err)
+	}
 
 	time.Sleep(500 * time.Millisecond)
 	os.Exit(0)
@@ -348,7 +352,9 @@ rm "$0"
 
 	// Run update script and exit
 	cmd := exec.Command("bash", scriptPath)
-	cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start update script: %v", err)
+	}
 
 	time.Sleep(500 * time.Millisecond)
 	os.Exit(0)

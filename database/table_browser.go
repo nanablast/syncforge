@@ -27,15 +27,21 @@ func GetTableData(config ConnectionConfig, tableName string, page, pageSize int)
 	}
 	defer db.Close()
 
+	dbType := config.Type
+	if dbType == "" {
+		dbType = MySQL
+	}
+
 	// Get total count
 	var totalCount int
-	err = db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM `%s`", tableName)).Scan(&totalCount)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(dbType, tableName))
+	err = db.QueryRow(countQuery).Scan(&totalCount)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get columns
-	columns, err := getColumns(db, tableName)
+	columns, err := getColumns(db, dbType, config.Database, tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -46,14 +52,23 @@ func GetTableData(config ConnectionConfig, tableName string, page, pageSize int)
 		offset = 0
 	}
 
-	// Build query
+	// Build query with database-specific pagination
 	quotedCols := make([]string, len(columns))
 	for i, col := range columns {
-		quotedCols[i] = fmt.Sprintf("`%s`", col)
+		quotedCols[i] = quoteIdentifier(dbType, col)
 	}
 
-	query := fmt.Sprintf("SELECT %s FROM `%s` LIMIT %d OFFSET %d",
-		strings.Join(quotedCols, ", "), tableName, pageSize, offset)
+	var query string
+	switch dbType {
+	case SQLServer:
+		// SQL Server uses OFFSET FETCH
+		query = fmt.Sprintf("SELECT %s FROM %s ORDER BY (SELECT NULL) OFFSET %d ROWS FETCH NEXT %d ROWS ONLY",
+			strings.Join(quotedCols, ", "), quoteIdentifier(dbType, tableName), offset, pageSize)
+	default:
+		// MySQL, PostgreSQL, SQLite use LIMIT OFFSET
+		query = fmt.Sprintf("SELECT %s FROM %s LIMIT %d OFFSET %d",
+			strings.Join(quotedCols, ", "), quoteIdentifier(dbType, tableName), pageSize, offset)
+	}
 
 	rows, err := db.Query(query)
 	if err != nil {

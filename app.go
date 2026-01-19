@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 
 	"syncforge/database"
 	"syncforge/updater"
@@ -65,8 +66,70 @@ func (a *App) ExecuteSQL(config database.ConnectionConfig, sql string) error {
 	}
 	defer db.Close()
 
-	_, err = db.Exec(sql)
-	return err
+	// MySQL supports multi-statement execution via DSN config
+	// For other databases, execute statements one by one
+	dbType := config.Type
+	if dbType == "" || dbType == database.MySQL {
+		_, err = db.Exec(sql)
+		return err
+	}
+
+	// Split and execute statements one by one for non-MySQL databases
+	statements := splitSQLStatements(sql)
+	for _, stmt := range statements {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		if _, err := db.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// splitSQLStatements splits SQL string into individual statements
+func splitSQLStatements(sql string) []string {
+	var statements []string
+	var current strings.Builder
+	inString := false
+	stringChar := rune(0)
+
+	for i, c := range sql {
+		if inString {
+			current.WriteRune(c)
+			// Check for end of string (handle escaped quotes)
+			if c == stringChar {
+				// Check if it's an escaped quote (two consecutive quotes)
+				if i+1 < len(sql) && rune(sql[i+1]) == stringChar {
+					continue
+				}
+				inString = false
+			}
+		} else {
+			if c == '\'' || c == '"' {
+				inString = true
+				stringChar = c
+				current.WriteRune(c)
+			} else if c == ';' {
+				stmt := strings.TrimSpace(current.String())
+				if stmt != "" {
+					statements = append(statements, stmt)
+				}
+				current.Reset()
+			} else {
+				current.WriteRune(c)
+			}
+		}
+	}
+
+	// Add any remaining statement
+	stmt := strings.TrimSpace(current.String())
+	if stmt != "" {
+		statements = append(statements, stmt)
+	}
+
+	return statements
 }
 
 // GetTablesForSync returns tables available for data sync

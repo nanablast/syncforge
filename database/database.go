@@ -336,7 +336,10 @@ func getMySQLTableInfo(db *sql.DB, tableName string) (*TableInfo, error) {
 	}
 	defer idxRows.Close()
 
-	cols, _ := idxRows.Columns()
+	cols, err := idxRows.Columns()
+	if err != nil {
+		return nil, err
+	}
 	values := make([]interface{}, len(cols))
 	valuePtrs := make([]interface{}, len(cols))
 	for i := range values {
@@ -860,12 +863,52 @@ func buildColumnDef(col ColumnInfo) string {
 		def += " NOT NULL"
 	}
 	if col.Default != nil {
-		def += fmt.Sprintf(" DEFAULT '%s'", *col.Default)
+		defaultVal := *col.Default
+		// Don't quote numeric defaults, NULL, or function calls like CURRENT_TIMESTAMP
+		if isNumericDefault(defaultVal) || isSpecialDefault(defaultVal) {
+			def += fmt.Sprintf(" DEFAULT %s", defaultVal)
+		} else {
+			def += fmt.Sprintf(" DEFAULT '%s'", defaultVal)
+		}
 	}
 	if col.Extra != "" {
 		def += " " + col.Extra
 	}
 	return def
+}
+
+func isNumericDefault(val string) bool {
+	if val == "" {
+		return false
+	}
+	// Check if it's a number (integer or float, possibly negative)
+	for i, c := range val {
+		if i == 0 && c == '-' {
+			continue
+		}
+		if c == '.' {
+			continue
+		}
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isSpecialDefault(val string) bool {
+	upper := strings.ToUpper(val)
+	specialDefaults := []string{"NULL", "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME", "NOW()", "TRUE", "FALSE"}
+	for _, special := range specialDefaults {
+		if upper == special {
+			return true
+		}
+	}
+	// Check for function calls like CURRENT_TIMESTAMP() or expressions
+	if strings.HasSuffix(upper, "()") || strings.HasPrefix(upper, "(") {
+		return true
+	}
+	return false
 }
 
 func columnsEqual(a, b ColumnInfo) bool {
