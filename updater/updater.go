@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	Version    = "1.1.0"
+	Version    = "2.0.0"
 	GithubRepo = "nanablast/syncforge"
 )
 
