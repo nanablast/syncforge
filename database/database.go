@@ -274,7 +274,7 @@ func getMySQLSchema(config ConnectionConfig) (*SchemaInfo, error) {
 		Tables:   make(map[string]TableInfo),
 	}
 
-	rows, err := db.Query("SHOW TABLES")
+	rows, err := db.Query("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME")
 	if err != nil {
 		return nil, err
 	}
