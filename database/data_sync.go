@@ -94,7 +94,7 @@ func getTableNames(db *sql.DB, dbType DBType, database string) ([]string, error)
 
 	switch dbType {
 	case MySQL, "":
-		query = "SHOW TABLES"
+		query = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME"
 	case PostgreSQL:
 		query = "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
 	case SQLite:
