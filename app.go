@@ -55,75 +55,154 @@ func (a *App) CompareSchemas(source, target database.ConnectionConfig) ([]databa
 		return nil, err
 	}
 
-	return database.CompareSchemas(sourceSchema, targetSchema), nil
+	dialect := target.Type
+	if dialect == "" {
+		dialect = database.MySQL
+	}
+
+	return database.CompareSchemasWithDialect(sourceSchema, targetSchema, dialect), nil
 }
 
-// ExecuteSQL executes SQL on target database
-func (a *App) ExecuteSQL(config database.ConnectionConfig, sql string) error {
+// ExecuteSQL executes SQL on target database inside a transaction
+func (a *App) ExecuteSQL(config database.ConnectionConfig, sqlStmt string) error {
 	db, err := database.Connect(config)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	// MySQL supports multi-statement execution via DSN config
-	// For other databases, execute statements one by one
-	dbType := config.Type
-	if dbType == "" || dbType == database.MySQL {
-		_, err = db.Exec(sql)
-		return err
+	statements := splitSQLStatements(sqlStmt)
+	if len(statements) == 0 {
+		return nil
 	}
 
-	// Split and execute statements one by one for non-MySQL databases
-	statements := splitSQLStatements(sql)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
 	for _, stmt := range statements {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
-		}
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := tx.Exec(stmt); err != nil {
 			return err
 		}
 	}
-	return nil
+
+	return tx.Commit()
 }
 
-// splitSQLStatements splits SQL string into individual statements
-func splitSQLStatements(sql string) []string {
+// splitSQLStatements splits SQL string into individual executable statements.
+func splitSQLStatements(sqlStmt string) []string {
 	var statements []string
 	var current strings.Builder
-	inString := false
-	stringChar := rune(0)
 
-	for i, c := range sql {
-		if inString {
+	runes := []rune(sqlStmt)
+	n := len(runes)
+
+	inSingleQuote := false
+	inDoubleQuote := false
+	inBacktick := false
+	inLineComment := false
+	inBlockComment := false
+
+	for i := 0; i < n; i++ {
+		c := runes[i]
+
+		if inLineComment {
+			if c == '\n' {
+				inLineComment = false
+				current.WriteRune(c)
+			}
+			continue
+		}
+
+		if inBlockComment {
+			if c == '*' && i+1 < n && runes[i+1] == '/' {
+				inBlockComment = false
+				i++
+			}
+			continue
+		}
+
+		if inSingleQuote {
 			current.WriteRune(c)
-			// Check for end of string (handle escaped quotes)
-			if c == stringChar {
-				// Check if it's an escaped quote (two consecutive quotes)
-				if i+1 < len(sql) && rune(sql[i+1]) == stringChar {
+			if c == '\\' && i+1 < n {
+				current.WriteRune(runes[i+1])
+				i++
+				continue
+			}
+			if c == '\'' {
+				if i+1 < n && runes[i+1] == '\'' {
+					current.WriteRune(runes[i+1])
+					i++
 					continue
 				}
-				inString = false
+				inSingleQuote = false
 			}
-		} else {
-			if c == '\'' || c == '"' {
-				inString = true
-				stringChar = c
-				current.WriteRune(c)
-			} else if c == ';' {
-				stmt := strings.TrimSpace(current.String())
-				if stmt != "" {
-					statements = append(statements, stmt)
+			continue
+		}
+
+		if inDoubleQuote {
+			current.WriteRune(c)
+			if c == '"' {
+				if i+1 < n && runes[i+1] == '"' {
+					current.WriteRune(runes[i+1])
+					i++
+					continue
 				}
-				current.Reset()
-			} else {
-				current.WriteRune(c)
+				inDoubleQuote = false
 			}
+			continue
+		}
+
+		if inBacktick {
+			current.WriteRune(c)
+			if c == '`' {
+				if i+1 < n && runes[i+1] == '`' {
+					current.WriteRune(runes[i+1])
+					i++
+					continue
+				}
+				inBacktick = false
+			}
+			continue
+		}
+
+		// Comments
+		if c == '-' && i+1 < n && runes[i+1] == '-' {
+			inLineComment = true
+			i++
+			continue
+		}
+		if c == '/' && i+1 < n && runes[i+1] == '*' {
+			inBlockComment = true
+			i++
+			continue
+		}
+
+		switch c {
+		case '\'':
+			inSingleQuote = true
+			current.WriteRune(c)
+		case '"':
+			inDoubleQuote = true
+			current.WriteRune(c)
+		case '`':
+			inBacktick = true
+			current.WriteRune(c)
+		case ';':
+			stmt := strings.TrimSpace(current.String())
+			if stmt != "" {
+				statements = append(statements, stmt)
+			}
+			current.Reset()
+		default:
+			current.WriteRune(c)
 		}
 	}
 
-	// Add any remaining statement
 	stmt := strings.TrimSpace(current.String())
 	if stmt != "" {
 		statements = append(statements, stmt)
@@ -211,12 +290,10 @@ func (a *App) OpenReleaseURL(url string) error {
 
 // DownloadAndApplyUpdate downloads and applies the update
 func (a *App) DownloadAndApplyUpdate(downloadURL string) error {
-	// Download the update
 	filePath, err := updater.DownloadUpdate(downloadURL, nil)
 	if err != nil {
 		return err
 	}
 
-	// Apply the update (this will exit the app and restart)
 	return updater.ApplyUpdate(filePath)
 }

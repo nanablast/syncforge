@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,16 +55,22 @@ func GetCurrentVersion() string {
 
 // CheckForUpdates checks GitHub releases for updates
 func CheckForUpdates() (*UpdateInfo, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", GithubRepo)
+	client := &http.Client{Timeout: 15 * time.Second}
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", GithubRepo)
 
-	resp, err := http.Get(url)
+	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check for updates: %v", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 404 {
-		// No releases yet
+	if resp.StatusCode == http.StatusNotFound {
 		return &UpdateInfo{
 			Available:      false,
 			CurrentVersion: Version,
@@ -71,7 +78,7 @@ func CheckForUpdates() (*UpdateInfo, error) {
 		}, nil
 	}
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
 	}
 
@@ -91,7 +98,6 @@ func CheckForUpdates() (*UpdateInfo, error) {
 		ReleaseURL:     release.HTMLURL,
 	}
 
-	// Find the appropriate asset for current platform
 	assetName := getAssetName()
 	for _, asset := range release.Assets {
 		if strings.Contains(asset.Name, assetName) {
@@ -105,7 +111,6 @@ func CheckForUpdates() (*UpdateInfo, error) {
 	return info, nil
 }
 
-// getAssetName returns the expected asset name for current platform
 func getAssetName() string {
 	switch runtime.GOOS {
 	case "darwin":
@@ -149,15 +154,55 @@ func compareVersions(v1, v2 string) int {
 	return 0
 }
 
+func validateDownloadURL(rawURL string, allowInsecure bool) error {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return fmt.Errorf("invalid download URL: %w", err)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("invalid download URL: missing host")
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if allowInsecure && u.Scheme == "http" {
+		return nil
+	}
+	return fmt.Errorf("refusing non-HTTPS download URL scheme: %s", u.Scheme)
+}
+
+func validateReleaseURL(rawURL string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("invalid release URL")
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return "", fmt.Errorf("unsupported URL scheme: %s", u.Scheme)
+	}
+	return u.String(), nil
+}
+
 // DownloadUpdate downloads the update to a temporary file
 func DownloadUpdate(downloadURL string, progressChan chan<- int) (string, error) {
-	resp, err := http.Get(downloadURL)
+	client := &http.Client{Timeout: 5 * time.Minute}
+	return downloadUpdateWithClient(client, downloadURL, progressChan, false)
+}
+
+func downloadUpdateWithClient(client *http.Client, downloadURL string, progressChan chan<- int, allowInsecure bool) (string, error) {
+	if err := validateDownloadURL(downloadURL, allowInsecure); err != nil {
+		return "", err
+	}
+
+	resp, err := client.Get(downloadURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to download update: %v", err)
 	}
 	defer resp.Body.Close()
 
-	// Determine file extension
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download failed with status %d", resp.StatusCode)
+	}
+
 	ext := ".zip"
 	if runtime.GOOS == "windows" {
 		ext = ".exe"
@@ -165,24 +210,35 @@ func DownloadUpdate(downloadURL string, progressChan chan<- int) (string, error)
 		ext = ""
 	}
 
-	// Create temp file
-	tmpDir := os.TempDir()
-	tmpFile, err := os.CreateTemp(tmpDir, "syncforge-update-*"+ext)
+	tmpFile, err := os.CreateTemp("", "syncforge-update-*"+ext)
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %v", err)
 	}
-	defer tmpFile.Close()
+	tmpPath := tmpFile.Name()
 
-	// Download with progress
+	cleanupOnError := true
+	defer func() {
+		_ = tmpFile.Close()
+		if cleanupOnError {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
 	totalSize := resp.ContentLength
 	var downloaded int64
 
 	buffer := make([]byte, 32*1024)
 	for {
-		n, err := resp.Body.Read(buffer)
+		n, readErr := resp.Body.Read(buffer)
 		if n > 0 {
-			tmpFile.Write(buffer[:n])
-			downloaded += int64(n)
+			written, writeErr := tmpFile.Write(buffer[:n])
+			if writeErr != nil {
+				return "", fmt.Errorf("failed to write temp file: %v", writeErr)
+			}
+			if written != n {
+				return "", io.ErrShortWrite
+			}
+			downloaded += int64(written)
 			if progressChan != nil && totalSize > 0 {
 				progress := int(float64(downloaded) / float64(totalSize) * 100)
 				select {
@@ -191,15 +247,30 @@ func DownloadUpdate(downloadURL string, progressChan chan<- int) (string, error)
 				}
 			}
 		}
-		if err == io.EOF {
+		if readErr == io.EOF {
 			break
 		}
-		if err != nil {
-			return "", fmt.Errorf("download error: %v", err)
+		if readErr != nil {
+			return "", fmt.Errorf("download error: %v", readErr)
 		}
 	}
 
-	return tmpFile.Name(), nil
+	if downloaded == 0 {
+		return "", fmt.Errorf("downloaded update file is empty")
+	}
+	if totalSize > 0 && downloaded != totalSize {
+		return "", fmt.Errorf("incomplete download: got %d bytes, expected %d", downloaded, totalSize)
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return "", fmt.Errorf("failed to close temp file: %v", err)
+	}
+	cleanupOnError = false
+	return tmpPath, nil
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 // ApplyUpdate applies the downloaded update and restarts the application
@@ -216,15 +287,12 @@ func ApplyUpdate(downloadedFile string) error {
 	}
 }
 
-// applyUpdateMacOS handles macOS update: unzip, replace .app, restart
 func applyUpdateMacOS(zipFile string) error {
-	// Get current app path
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %v", err)
 	}
 
-	// Find .app bundle (go up from Contents/MacOS/executable)
 	appPath := execPath
 	for i := 0; i < 3; i++ {
 		appPath = filepath.Dir(appPath)
@@ -236,21 +304,20 @@ func applyUpdateMacOS(zipFile string) error {
 	appDir := filepath.Dir(appPath)
 	appName := filepath.Base(appPath)
 
-	// Create temp directory for extraction
 	tmpExtractDir, err := os.MkdirTemp("", "syncforge-update-extract-")
 	if err != nil {
 		return fmt.Errorf("failed to create temp extract dir: %v", err)
 	}
 
-	// Unzip the downloaded file
 	if err := unzip(zipFile, tmpExtractDir); err != nil {
+		_ = os.RemoveAll(tmpExtractDir)
 		return fmt.Errorf("failed to unzip update: %v", err)
 	}
 
-	// Find the .app in extracted files
 	var newAppPath string
 	entries, err := os.ReadDir(tmpExtractDir)
 	if err != nil {
+		_ = os.RemoveAll(tmpExtractDir)
 		return fmt.Errorf("failed to read extract dir: %v", err)
 	}
 	for _, entry := range entries {
@@ -260,45 +327,52 @@ func applyUpdateMacOS(zipFile string) error {
 		}
 	}
 	if newAppPath == "" {
+		_ = os.RemoveAll(tmpExtractDir)
 		return fmt.Errorf("no .app found in update package")
 	}
 
-	// Create update script
+	targetAppPath := filepath.Join(appDir, appName)
 	scriptContent := fmt.Sprintf(`#!/bin/bash
+set -e
 sleep 2
-rm -rf "%s"
-mv "%s" "%s"
-open "%s"
-rm -rf "%s"
-rm "$0"
-`, appPath, newAppPath, filepath.Join(appDir, appName), filepath.Join(appDir, appName), tmpExtractDir)
+rm -rf %s
+mv %s %s
+xattr -dr com.apple.quarantine %s 2>/dev/null || true
+open %s
+rm -rf %s
+rm -f -- "$0"
+`, shellQuote(appPath), shellQuote(newAppPath), shellQuote(targetAppPath), shellQuote(targetAppPath), shellQuote(targetAppPath), shellQuote(tmpExtractDir))
 
-	scriptPath := filepath.Join(os.TempDir(), "syncforge-update.sh")
-	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+	scriptFile, err := os.CreateTemp("", "syncforge-update-*.sh")
+	if err != nil {
+		return fmt.Errorf("failed to create update script: %v", err)
+	}
+	scriptPath := scriptFile.Name()
+	if _, err := scriptFile.WriteString(scriptContent); err != nil {
+		_ = scriptFile.Close()
+		_ = os.Remove(scriptPath)
 		return fmt.Errorf("failed to write update script: %v", err)
 	}
+	_ = scriptFile.Chmod(0700)
+	_ = scriptFile.Close()
 
-	// Run update script and exit
 	cmd := exec.Command("bash", scriptPath)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start update script: %v", err)
 	}
 
-	// Give script time to start
 	time.Sleep(500 * time.Millisecond)
 	os.Exit(0)
 
 	return nil
 }
 
-// applyUpdateWindows handles Windows update: batch script to replace exe and restart
 func applyUpdateWindows(newExe string) error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %v", err)
 	}
 
-	// Create batch script
 	scriptContent := fmt.Sprintf(`@echo off
 timeout /t 2 /nobreak >nul
 del "%s"
@@ -307,13 +381,19 @@ start "" "%s"
 del "%%~f0"
 `, execPath, newExe, execPath, execPath)
 
-	scriptPath := filepath.Join(os.TempDir(), "syncforge-update.bat")
-	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+	scriptFile, err := os.CreateTemp("", "syncforge-update-*.bat")
+	if err != nil {
+		return fmt.Errorf("failed to create update script: %v", err)
+	}
+	scriptPath := scriptFile.Name()
+	if _, err := scriptFile.WriteString(scriptContent); err != nil {
+		_ = scriptFile.Close()
+		_ = os.Remove(scriptPath)
 		return fmt.Errorf("failed to write update script: %v", err)
 	}
+	_ = scriptFile.Close()
 
-	// Run update script and exit
-	cmd := exec.Command("cmd", "/c", "start", "/b", scriptPath)
+	cmd := exec.Command("cmd", "/c", "start", "/b", "", scriptPath)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start update script: %v", err)
 	}
@@ -324,33 +404,38 @@ del "%%~f0"
 	return nil
 }
 
-// applyUpdateLinux handles Linux update: shell script to replace binary and restart
 func applyUpdateLinux(newBinary string) error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %v", err)
 	}
 
-	// Make new binary executable
 	if err := os.Chmod(newBinary, 0755); err != nil {
 		return fmt.Errorf("failed to make update executable: %v", err)
 	}
 
-	// Create update script
 	scriptContent := fmt.Sprintf(`#!/bin/bash
+set -e
 sleep 2
-mv "%s" "%s"
-chmod +x "%s"
-"%s" &
-rm "$0"
-`, newBinary, execPath, execPath, execPath)
+mv %s %s
+chmod +x %s
+%s &
+rm -f -- "$0"
+`, shellQuote(newBinary), shellQuote(execPath), shellQuote(execPath), shellQuote(execPath))
 
-	scriptPath := filepath.Join(os.TempDir(), "syncforge-update.sh")
-	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+	scriptFile, err := os.CreateTemp("", "syncforge-update-*.sh")
+	if err != nil {
+		return fmt.Errorf("failed to create update script: %v", err)
+	}
+	scriptPath := scriptFile.Name()
+	if _, err := scriptFile.WriteString(scriptContent); err != nil {
+		_ = scriptFile.Close()
+		_ = os.Remove(scriptPath)
 		return fmt.Errorf("failed to write update script: %v", err)
 	}
+	_ = scriptFile.Chmod(0700)
+	_ = scriptFile.Close()
 
-	// Run update script and exit
 	cmd := exec.Command("bash", scriptPath)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start update script: %v", err)
@@ -362,7 +447,6 @@ rm "$0"
 	return nil
 }
 
-// unzip extracts a zip file to destination directory
 func unzip(src, dest string) error {
 	r, err := zip.OpenReader(src)
 	if err != nil {
@@ -373,17 +457,18 @@ func unzip(src, dest string) error {
 	for _, f := range r.File {
 		fpath := filepath.Join(dest, f.Name)
 
-		// Check for ZipSlip vulnerability
 		if !strings.HasPrefix(fpath, filepath.Clean(dest)+string(os.PathSeparator)) {
 			return fmt.Errorf("invalid file path: %s", fpath)
 		}
 
 		if f.FileInfo().IsDir() {
-			os.MkdirAll(fpath, os.ModePerm)
+			if err := os.MkdirAll(fpath, 0755); err != nil {
+				return err
+			}
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fpath), 0755); err != nil {
 			return err
 		}
 
@@ -394,16 +479,19 @@ func unzip(src, dest string) error {
 
 		rc, err := f.Open()
 		if err != nil {
-			outFile.Close()
+			_ = outFile.Close()
 			return err
 		}
 
-		_, err = io.Copy(outFile, rc)
-		outFile.Close()
-		rc.Close()
+		_, copyErr := io.Copy(outFile, rc)
+		closeErr := outFile.Close()
+		_ = rc.Close()
 
-		if err != nil {
-			return err
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeErr != nil {
+			return closeErr
 		}
 	}
 
@@ -411,15 +499,20 @@ func unzip(src, dest string) error {
 }
 
 // OpenReleaseURL opens the release page in browser
-func OpenReleaseURL(url string) error {
+func OpenReleaseURL(rawURL string) error {
+	safeURL, err := validateReleaseURL(rawURL)
+	if err != nil {
+		return err
+	}
+
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", safeURL)
 	case "windows":
-		cmd = exec.Command("cmd", "/c", "start", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", safeURL)
 	case "linux":
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", safeURL)
 	default:
 		return fmt.Errorf("unsupported platform")
 	}

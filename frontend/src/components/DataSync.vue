@@ -179,11 +179,11 @@
 
         <!-- Execute Actions -->
         <div class="sync-actions" v-if="filteredDiffs.length > 0">
-          <button class="btn btn-copy" @click="copySQL">
+          <button class="btn btn-copy" @click="copySQL" :disabled="executing">
             {{ t('dataSync.copySQL') }} ({{ filteredDiffs.length }})
           </button>
-          <button class="btn btn-execute" @click="showConfirmDialog = true">
-            {{ t('dataSync.executeSync') }}
+          <button class="btn btn-execute" @click="showConfirmDialog = true" :disabled="executing">
+            {{ executing ? t('dataSync.executing') : t('dataSync.executeSync') }}
           </button>
         </div>
       </div>
@@ -232,6 +232,7 @@ const loadingTables = ref(false)
 const selectedTables = ref<string[]>([])
 const lastClickedIndex = ref<number | null>(null)
 const comparing = ref(false)
+const executing = ref(false)
 const hasCompared = ref(false)
 const dataDiffs = ref<DataDiffResult[]>([])
 const comparedTablesCount = ref(0)
@@ -319,7 +320,10 @@ const filteredDiffs = computed(() => {
 
 // Methods
 async function loadTables() {
-  if (!props.sourceConnected || !props.sourceConfig.database) {
+  const hasDatabase = props.sourceConfig.type === 'sqlite'
+    ? Boolean(props.sourceConfig.filePath)
+    : Boolean(props.sourceConfig.database)
+  if (!props.sourceConnected || !hasDatabase) {
     alert(t('dataSync.connectFirst'))
     return
   }
@@ -418,6 +422,7 @@ async function compareSelectedTables() {
   hasCompared.value = false
   dataDiffs.value = []
   comparedTablesCount.value = 0
+  showLimit.value = 50
   clearLogs()
   startDotAnimation()
 
@@ -470,16 +475,22 @@ function copySQL() {
 }
 
 async function executeSync() {
-  if (filteredDiffs.value.length === 0) return
+  if (filteredDiffs.value.length === 0 || executing.value) return
 
   showConfirmDialog.value = false
+  executing.value = true
 
   try {
     const sql = filteredDiffs.value.map(d => d.sql).join('\n')
     await ExecuteSQL(props.targetConfig, sql)
+    await addLog(t('dataSync.syncSuccess'), 'done')
+    alert(t('dataSync.syncSuccess'))
     await compareSelectedTables()
   } catch (e: any) {
-    console.error('Sync failed:', e)
+    await addLog(`${t('dataSync.syncFailed')}: ${e}`, 'error')
+    alert(`${t('dataSync.syncFailed')}: ${e}`)
+  } finally {
+    executing.value = false
   }
 }
 </script>

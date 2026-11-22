@@ -1,13 +1,13 @@
 <template>
   <div class="diff-results">
     <div class="results-header">
-      <h3>Differences Found ({{ results.length }})</h3>
+      <h3>{{ t('diff.differencesFound', { count: results.length }) }}</h3>
       <div class="header-actions">
         <button class="btn btn-copy" @click="copyAllSQL">
-          Copy All SQL
+          {{ copiedAll ? t('diff.copied') : t('diff.copyAll') }}
         </button>
         <button class="btn btn-execute-all" @click="showConfirmDialog = true" v-if="results.length > 0">
-          Execute All
+          {{ t('diff.executeAll') }}
         </button>
       </div>
     </div>
@@ -21,7 +21,7 @@
       >
         <div class="result-header">
           <span class="badge" :class="result.type">
-            {{ typeLabels[result.type] }}
+            {{ getTypeLabel(result.type) }}
           </span>
           <span class="table-name">{{ result.tableName }}</span>
           <span class="detail">{{ result.detail }}</span>
@@ -29,8 +29,12 @@
         <div class="sql-block">
           <pre><code>{{ result.sql }}</code></pre>
           <div class="sql-actions">
-            <button class="btn-small" @click="copySingleSQL(result.sql)">Copy</button>
-            <button class="btn-small btn-run" @click="$emit('execute', result.sql)">Run</button>
+            <button class="btn-small" @click="copySingleSQL(result.sql, index)">
+              {{ copiedIndex === index ? t('diff.copied') : t('diff.copy') }}
+            </button>
+            <button class="btn-small btn-run" @click="$emit('execute', result.sql)">
+              {{ t('diff.run') }}
+            </button>
           </div>
         </div>
       </div>
@@ -38,18 +42,18 @@
 
     <!-- Full SQL Preview -->
     <div class="full-sql">
-      <h4>Complete Migration Script</h4>
+      <h4>{{ t('diff.completeScript') }}</h4>
       <pre><code>{{ fullSQL }}</code></pre>
     </div>
 
     <!-- Confirm Dialog -->
     <div class="dialog-overlay" v-if="showConfirmDialog" @click.self="showConfirmDialog = false">
       <div class="dialog">
-        <h4>Confirm Execution</h4>
-        <p>Execute all {{ results.length }} SQL statements on target database?</p>
+        <h4>{{ t('diff.confirmTitle') }}</h4>
+        <p>{{ t('diff.confirmMsg', { count: results.length }) }}</p>
         <div class="dialog-actions">
-          <button class="btn btn-cancel" @click="showConfirmDialog = false">Cancel</button>
-          <button class="btn btn-confirm" @click="executeAll">Execute</button>
+          <button class="btn btn-cancel" @click="showConfirmDialog = false">{{ t('diff.cancel') }}</button>
+          <button class="btn btn-confirm" @click="executeAll">{{ t('diff.execute') }}</button>
         </div>
       </div>
     </div>
@@ -58,9 +62,12 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { database } from '../../wailsjs/go/models'
 
 type DiffResult = database.DiffResult
+
+const { t } = useI18n()
 
 const props = defineProps<{
   results: DiffResult[]
@@ -71,11 +78,16 @@ const emit = defineEmits<{
 }>()
 
 const showConfirmDialog = ref(false)
+const copiedAll = ref(false)
+const copiedIndex = ref<number | null>(null)
 
-const typeLabels: Record<string, string> = {
-  added: '+ ADD',
-  removed: '- DROP',
-  modified: '~ MODIFY'
+function getTypeLabel(type: string): string {
+  switch (type) {
+    case 'added': return t('diff.addBadge')
+    case 'removed': return t('diff.dropBadge')
+    case 'modified': return t('diff.modifyBadge')
+    default: return type
+  }
 }
 
 const fullSQL = computed(() => {
@@ -84,10 +96,20 @@ const fullSQL = computed(() => {
 
 function copyAllSQL() {
   navigator.clipboard.writeText(fullSQL.value)
+  copiedAll.value = true
+  window.setTimeout(() => {
+    copiedAll.value = false
+  }, 1500)
 }
 
-function copySingleSQL(sql: string) {
+function copySingleSQL(sql: string, index: number) {
   navigator.clipboard.writeText(sql)
+  copiedIndex.value = index
+  window.setTimeout(() => {
+    if (copiedIndex.value === index) {
+      copiedIndex.value = null
+    }
+  }, 1500)
 }
 
 function executeAll() {

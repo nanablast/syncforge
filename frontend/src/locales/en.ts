@@ -4,7 +4,8 @@ export default {
     checkUpdates: 'Check Updates',
     checking: 'Checking...',
     updateAvailable: 'Update Available',
-    clickToConnect: 'Click to connect'
+    clickToConnect: 'Click to connect',
+    settings: 'Connection Settings'
   },
   tabs: {
     schemaCompare: 'Schema Compare',
@@ -40,7 +41,13 @@ export default {
     charset: 'Charset',
     collation: 'Collation',
     create: 'Create',
-    creating: 'Creating...'
+    creating: 'Creating...',
+    sourceFailed: 'Source connection failed',
+    targetFailed: 'Target connection failed',
+    saveFailed: 'Failed to save connection',
+    deleteFailed: 'Failed to delete connection',
+    dbCreated: 'Database "{name}" created successfully!',
+    createFailed: 'Failed to create database'
   },
   schema: {
     compare: 'Compare Schemas',
@@ -49,7 +56,7 @@ export default {
     connectBoth: 'Connect to both databases to compare schemas',
     initializing: 'Initializing comparison',
     connectingSource: 'Connecting to source',
-    fetchingSource: 'Fetching source schema',
+    fetchingSource: 'Fetching source & target schemas',
     connectingTarget: 'Connecting to target',
     fetchingTarget: 'Fetching target schema',
     comparingTables: 'Comparing table structures',
@@ -58,6 +65,20 @@ export default {
   },
   diff: {
     title: 'Schema Differences',
+    differencesFound: 'Differences Found ({count})',
+    copyAll: 'Copy All SQL',
+    copied: 'Copied!',
+    executeAll: 'Execute All',
+    copy: 'Copy',
+    run: 'Run',
+    completeScript: 'Complete Migration Script',
+    confirmTitle: 'Confirm Execution',
+    confirmMsg: 'Execute all {count} SQL statements on target database?',
+    cancel: 'Cancel',
+    execute: 'Execute',
+    addBadge: '+ ADD',
+    dropBadge: '- DROP',
+    modifyBadge: '~ MODIFY',
     added: 'Added',
     removed: 'Removed',
     modified: 'Modified',
@@ -77,6 +98,7 @@ export default {
     selectAll: 'Select All',
     compare: 'Compare',
     comparing: 'Comparing...',
+    executing: 'Executing...',
     tables: 'Table(s)',
     selected: 'Selected',
     clearAll: 'Clear All',
@@ -98,6 +120,8 @@ export default {
     connectFirst: 'Please connect to source database first',
     failedLoadTables: 'Failed to load tables',
     copiedSQL: 'Copied {count} SQL statements',
+    syncSuccess: 'Data sync executed successfully!',
+    syncFailed: 'Data sync failed',
     noPK: 'No PK',
     pk: 'PK',
     rows: 'rows',
@@ -144,7 +168,12 @@ export default {
     later: 'Later',
     viewRelease: 'View Release',
     install: 'Install Update',
-    updating: 'Updating...'
+    updating: 'Updating...',
+    latestVersion: 'You are running the latest version!',
+    checkFailed: 'Failed to check for updates',
+    openFailed: 'Failed to open download page',
+    noDownloadUrl: 'No download URL available',
+    applyFailed: 'Failed to apply update'
   },
   language: {
     en: 'English',

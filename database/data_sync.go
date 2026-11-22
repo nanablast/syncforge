@@ -1,9 +1,14 @@
 package database
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
+	"time"
+	"unicode/utf8"
 )
 
 // DataSyncConfig holds sync configuration
@@ -18,14 +23,14 @@ type DataSyncConfig struct {
 
 // TableDataInfo holds table data comparison info
 type TableDataInfo struct {
-	TableName    string   `json:"tableName"`
-	PrimaryKeys  []string `json:"primaryKeys"`
-	Columns      []string `json:"columns"`
-	SourceCount  int      `json:"sourceCount"`
-	TargetCount  int      `json:"targetCount"`
-	InsertCount  int      `json:"insertCount"`
-	UpdateCount  int      `json:"updateCount"`
-	DeleteCount  int      `json:"deleteCount"`
+	TableName   string   `json:"tableName"`
+	PrimaryKeys []string `json:"primaryKeys"`
+	Columns     []string `json:"columns"`
+	SourceCount int      `json:"sourceCount"`
+	TargetCount int      `json:"targetCount"`
+	InsertCount int      `json:"insertCount"`
+	UpdateCount int      `json:"updateCount"`
+	DeleteCount int      `json:"deleteCount"`
 }
 
 // DataDiffResult holds data difference details
@@ -60,19 +65,16 @@ func GetTablesForSync(config ConnectionConfig) ([]TableDataInfo, error) {
 	for _, tableName := range tableNames {
 		info := TableDataInfo{TableName: tableName}
 
-		// Get primary keys
 		info.PrimaryKeys, err = getPrimaryKeys(db, dbType, config.Database, tableName)
 		if err != nil {
 			return nil, err
 		}
 
-		// Get columns
 		info.Columns, err = getColumns(db, dbType, config.Database, tableName)
 		if err != nil {
 			return nil, err
 		}
 
-		// Get row count
 		var count int
 		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(dbType, tableName))
 		err = db.QueryRow(countQuery).Scan(&count)
@@ -96,11 +98,11 @@ func getTableNames(db *sql.DB, dbType DBType, database string) ([]string, error)
 	case MySQL, "":
 		query = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME"
 	case PostgreSQL:
-		query = "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+		query = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
 	case SQLite:
-		query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+		query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
 	case SQLServer:
-		query = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'"
+		query = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = SCHEMA_NAME() AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME"
 	default:
 		return nil, fmt.Errorf("unsupported database type: %s", dbType)
 	}
@@ -119,22 +121,24 @@ func getTableNames(db *sql.DB, dbType DBType, database string) ([]string, error)
 		}
 		tableNames = append(tableNames, name)
 	}
-	return tableNames, nil
+	return tableNames, rows.Err()
 }
 
-// quoteIdentifier quotes an identifier based on database type
+func escapeSQLitePragmaName(name string) string {
+	return strings.ReplaceAll(name, "'", "''")
+}
+
+// quoteIdentifier quotes and escapes an identifier based on database type
 func quoteIdentifier(dbType DBType, name string) string {
 	switch dbType {
 	case MySQL, "":
-		return fmt.Sprintf("`%s`", name)
-	case PostgreSQL:
-		return fmt.Sprintf("\"%s\"", name)
-	case SQLite:
-		return fmt.Sprintf("\"%s\"", name)
+		return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``"))
+	case PostgreSQL, SQLite:
+		return fmt.Sprintf("\"%s\"", strings.ReplaceAll(name, "\"", "\"\""))
 	case SQLServer:
-		return fmt.Sprintf("[%s]", name)
+		return fmt.Sprintf("[%s]", strings.ReplaceAll(name, "]", "]]"))
 	default:
-		return fmt.Sprintf("`%s`", name)
+		return fmt.Sprintf("`%s`", strings.ReplaceAll(name, "`", "``"))
 	}
 }
 
@@ -161,7 +165,6 @@ func CompareTableData(sourceConfig, targetConfig ConnectionConfig, tableName str
 		targetType = MySQL
 	}
 
-	// Get primary keys
 	primaryKeys, err := getPrimaryKeys(sourceDB, sourceType, sourceConfig.Database, tableName)
 	if err != nil {
 		return nil, err
@@ -170,43 +173,56 @@ func CompareTableData(sourceConfig, targetConfig ConnectionConfig, tableName str
 		return nil, fmt.Errorf("table %s has no primary key", tableName)
 	}
 
-	// Get columns
 	columns, err := getColumns(sourceDB, sourceType, sourceConfig.Database, tableName)
 	if err != nil {
 		return nil, err
 	}
+	if len(columns) == 0 {
+		return nil, fmt.Errorf("table %s has no columns", tableName)
+	}
 
-	var results []DataDiffResult
-
-	// Get source data
 	sourceData, err := getTableData(sourceDB, sourceType, tableName, columns, primaryKeys)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get source data: %v", err)
 	}
 
-	// Get target data
 	targetData, err := getTableData(targetDB, targetType, tableName, columns, primaryKeys)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get target data: %v", err)
 	}
 
-	// Find inserts and updates
-	for pkKey, sourceRow := range sourceData {
+	sourceKeys := make([]string, 0, len(sourceData))
+	for k := range sourceData {
+		sourceKeys = append(sourceKeys, k)
+	}
+	sort.Strings(sourceKeys)
+
+	targetKeys := make([]string, 0, len(targetData))
+	for k := range targetData {
+		targetKeys = append(targetKeys, k)
+	}
+	sort.Strings(targetKeys)
+
+	var results []DataDiffResult
+
+	for _, pkKey := range sourceKeys {
+		sourceRow := sourceData[pkKey]
 		if targetRow, exists := targetData[pkKey]; exists {
-			// Check for updates
 			if !rowsEqual(sourceRow, targetRow) {
-				pk := extractPrimaryKey(sourceRow, primaryKeys)
-				results = append(results, DataDiffResult{
-					Type:       "update",
-					TableName:  tableName,
-					PrimaryKey: pk,
-					OldValues:  targetRow,
-					NewValues:  sourceRow,
-					SQL:        generateUpdateSQL(targetType, tableName, sourceRow, primaryKeys),
-				})
+				updateSQL := generateUpdateSQL(targetType, tableName, sourceRow, columns, primaryKeys)
+				if updateSQL != "" {
+					pk := extractPrimaryKey(sourceRow, primaryKeys)
+					results = append(results, DataDiffResult{
+						Type:       "update",
+						TableName:  tableName,
+						PrimaryKey: pk,
+						OldValues:  targetRow,
+						NewValues:  sourceRow,
+						SQL:        updateSQL,
+					})
+				}
 			}
 		} else {
-			// Insert
 			pk := extractPrimaryKey(sourceRow, primaryKeys)
 			results = append(results, DataDiffResult{
 				Type:       "insert",
@@ -218,8 +234,8 @@ func CompareTableData(sourceConfig, targetConfig ConnectionConfig, tableName str
 		}
 	}
 
-	// Find deletes
-	for pkKey, targetRow := range targetData {
+	for _, pkKey := range targetKeys {
+		targetRow := targetData[pkKey]
 		if _, exists := sourceData[pkKey]; !exists {
 			pk := extractPrimaryKey(targetRow, primaryKeys)
 			results = append(results, DataDiffResult{
@@ -265,13 +281,11 @@ func GetDataSyncSummary(sourceConfig, targetConfig ConnectionConfig, tableName s
 
 	info := &TableDataInfo{TableName: tableName}
 
-	// Get primary keys
 	info.PrimaryKeys, _ = getPrimaryKeys(sourceDB, sourceType, sourceConfig.Database, tableName)
 	info.Columns, _ = getColumns(sourceDB, sourceType, sourceConfig.Database, tableName)
 
-	// Get counts
-	sourceDB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(sourceType, tableName))).Scan(&info.SourceCount)
-	targetDB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(targetType, tableName))).Scan(&info.TargetCount)
+	_ = sourceDB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(sourceType, tableName))).Scan(&info.SourceCount)
+	_ = targetDB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(targetType, tableName))).Scan(&info.TargetCount)
 
 	for _, diff := range diffs {
 		switch diff.Type {
@@ -296,27 +310,32 @@ func getPrimaryKeys(db *sql.DB, dbType DBType, database, tableName string) ([]st
 		query = `
 			SELECT COLUMN_NAME
 			FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-			WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+			WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
 			AND CONSTRAINT_NAME = 'PRIMARY'
 			ORDER BY ORDINAL_POSITION`
-		args = []interface{}{database, tableName}
+		args = []interface{}{tableName}
 	case PostgreSQL:
 		query = `
 			SELECT a.attname
 			FROM pg_index i
+			JOIN pg_class c ON c.oid = i.indrelid
+			JOIN pg_namespace n ON n.oid = c.relnamespace
 			JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-			WHERE i.indrelid = $1::regclass AND i.indisprimary
+			WHERE n.nspname = 'public' AND c.relname = $1 AND i.indisprimary
 			ORDER BY array_position(i.indkey, a.attnum)`
 		args = []interface{}{tableName}
 	case SQLite:
-		// SQLite uses PRAGMA, handled separately
-		rows, err := db.Query(fmt.Sprintf("PRAGMA table_info('%s')", tableName))
+		rows, err := db.Query(fmt.Sprintf("PRAGMA table_info('%s')", escapeSQLitePragmaName(tableName)))
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
 
-		var pks []string
+		type pkEntry struct {
+			name  string
+			order int
+		}
+		var entries []pkEntry
 		for rows.Next() {
 			var cid int
 			var name, colType string
@@ -326,16 +345,31 @@ func getPrimaryKeys(db *sql.DB, dbType DBType, database, tableName string) ([]st
 				return nil, err
 			}
 			if pk > 0 {
-				pks = append(pks, name)
+				entries = append(entries, pkEntry{name: name, order: pk})
 			}
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		sort.SliceStable(entries, func(i, j int) bool {
+			return entries[i].order < entries[j].order
+		})
+		pks := make([]string, len(entries))
+		for i, e := range entries {
+			pks[i] = e.name
 		}
 		return pks, nil
 	case SQLServer:
 		query = `
 			SELECT c.COLUMN_NAME
 			FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-			JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE c ON tc.CONSTRAINT_NAME = c.CONSTRAINT_NAME
-			WHERE tc.TABLE_NAME = @p1 AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
+			JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE c
+			  ON tc.CONSTRAINT_NAME = c.CONSTRAINT_NAME
+			 AND tc.TABLE_SCHEMA = c.TABLE_SCHEMA
+			 AND tc.TABLE_NAME = c.TABLE_NAME
+			WHERE tc.TABLE_SCHEMA = SCHEMA_NAME()
+			  AND tc.TABLE_NAME = @p1
+			  AND tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
 			ORDER BY c.ORDINAL_POSITION`
 		args = []interface{}{tableName}
 	default:
@@ -356,7 +390,7 @@ func getPrimaryKeys(db *sql.DB, dbType DBType, database, tableName string) ([]st
 		}
 		pks = append(pks, pk)
 	}
-	return pks, nil
+	return pks, rows.Err()
 }
 
 func getColumns(db *sql.DB, dbType DBType, database, tableName string) ([]string, error) {
@@ -368,9 +402,9 @@ func getColumns(db *sql.DB, dbType DBType, database, tableName string) ([]string
 		query = `
 			SELECT COLUMN_NAME
 			FROM INFORMATION_SCHEMA.COLUMNS
-			WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+			WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
 			ORDER BY ORDINAL_POSITION`
-		args = []interface{}{database, tableName}
+		args = []interface{}{tableName}
 	case PostgreSQL:
 		query = `
 			SELECT column_name
@@ -379,7 +413,7 @@ func getColumns(db *sql.DB, dbType DBType, database, tableName string) ([]string
 			ORDER BY ordinal_position`
 		args = []interface{}{tableName}
 	case SQLite:
-		rows, err := db.Query(fmt.Sprintf("PRAGMA table_info('%s')", tableName))
+		rows, err := db.Query(fmt.Sprintf("PRAGMA table_info('%s')", escapeSQLitePragmaName(tableName)))
 		if err != nil {
 			return nil, err
 		}
@@ -396,12 +430,12 @@ func getColumns(db *sql.DB, dbType DBType, database, tableName string) ([]string
 			}
 			cols = append(cols, name)
 		}
-		return cols, nil
+		return cols, rows.Err()
 	case SQLServer:
 		query = `
 			SELECT COLUMN_NAME
 			FROM INFORMATION_SCHEMA.COLUMNS
-			WHERE TABLE_NAME = @p1
+			WHERE TABLE_SCHEMA = SCHEMA_NAME() AND TABLE_NAME = @p1
 			ORDER BY ORDINAL_POSITION`
 		args = []interface{}{tableName}
 	default:
@@ -422,7 +456,40 @@ func getColumns(db *sql.DB, dbType DBType, database, tableName string) ([]string
 		}
 		cols = append(cols, col)
 	}
-	return cols, nil
+	return cols, rows.Err()
+}
+
+func normalizeScannedValue(val interface{}) interface{} {
+	if b, ok := val.([]byte); ok {
+		copied := make([]byte, len(b))
+		copy(copied, b)
+		if utf8.Valid(copied) && !bytes.ContainsRune(copied, 0) {
+			return string(copied)
+		}
+		return copied
+	}
+	return val
+}
+
+func buildPrimaryKeyKey(row map[string]interface{}, primaryKeys []string) string {
+	var b strings.Builder
+	for _, pk := range primaryKeys {
+		val := row[pk]
+		if val == nil {
+			b.WriteString("N;")
+			continue
+		}
+		var repr string
+		if raw, ok := val.([]byte); ok {
+			repr = "B:" + hex.EncodeToString(raw)
+		} else if t, ok := val.(time.Time); ok {
+			repr = "T:" + t.UTC().Format(time.RFC3339Nano)
+		} else {
+			repr = fmt.Sprintf("V:%v", val)
+		}
+		fmt.Fprintf(&b, "%d:%s;", len(repr), repr)
+	}
+	return b.String()
 }
 
 func getTableData(db *sql.DB, dbType DBType, tableName string, columns, primaryKeys []string) (map[string]map[string]interface{}, error) {
@@ -451,26 +518,43 @@ func getTableData(db *sql.DB, dbType DBType, tableName string, columns, primaryK
 			return nil, err
 		}
 
-		row := make(map[string]interface{})
-		var pkParts []string
+		row := make(map[string]interface{}, len(columns))
 		for i, col := range columns {
-			val := values[i]
-			if b, ok := val.([]byte); ok {
-				row[col] = string(b)
-			} else {
-				row[col] = val
-			}
+			row[col] = normalizeScannedValue(values[i])
 		}
 
-		// Build primary key string
-		for _, pk := range primaryKeys {
-			pkParts = append(pkParts, fmt.Sprintf("%v", row[pk]))
-		}
-		pkKey := strings.Join(pkParts, "|")
+		pkKey := buildPrimaryKeyKey(row, primaryKeys)
 		data[pkKey] = row
 	}
 
-	return data, nil
+	return data, rows.Err()
+}
+
+func valuesEqual(a, b interface{}) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+
+	if ba, ok := a.([]byte); ok {
+		if bb, ok := b.([]byte); ok {
+			return bytes.Equal(ba, bb)
+		}
+		return false
+	}
+	if _, ok := b.([]byte); ok {
+		return false
+	}
+
+	if ta, ok := a.(time.Time); ok {
+		if tb, ok := b.(time.Time); ok {
+			return ta.Equal(tb)
+		}
+	}
+
+	return fmt.Sprintf("%T:%v", a, a) == fmt.Sprintf("%T:%v", b, b) || fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
 }
 
 func rowsEqual(a, b map[string]interface{}) bool {
@@ -478,7 +562,8 @@ func rowsEqual(a, b map[string]interface{}) bool {
 		return false
 	}
 	for k, v := range a {
-		if fmt.Sprintf("%v", v) != fmt.Sprintf("%v", b[k]) {
+		bv, exists := b[k]
+		if !exists || !valuesEqual(v, bv) {
 			return false
 		}
 	}
@@ -486,7 +571,7 @@ func rowsEqual(a, b map[string]interface{}) bool {
 }
 
 func extractPrimaryKey(row map[string]interface{}, primaryKeys []string) map[string]interface{} {
-	pk := make(map[string]interface{})
+	pk := make(map[string]interface{}, len(primaryKeys))
 	for _, key := range primaryKeys {
 		pk[key] = row[key]
 	}
@@ -500,7 +585,7 @@ func generateInsertSQL(dbType DBType, tableName string, row map[string]interface
 	for _, col := range columns {
 		if val, ok := row[col]; ok {
 			cols = append(cols, quoteIdentifier(dbType, col))
-			vals = append(vals, escapeValue(val))
+			vals = append(vals, escapeValueForDialect(dbType, val))
 		}
 	}
 
@@ -510,25 +595,29 @@ func generateInsertSQL(dbType DBType, tableName string, row map[string]interface
 		strings.Join(vals, ", "))
 }
 
-func generateUpdateSQL(dbType DBType, tableName string, row map[string]interface{}, primaryKeys []string) string {
-	var sets []string
-	var wheres []string
+func generateUpdateSQL(dbType DBType, tableName string, row map[string]interface{}, columns, primaryKeys []string) string {
+	pkSet := make(map[string]bool, len(primaryKeys))
+	for _, pk := range primaryKeys {
+		pkSet[pk] = true
+	}
 
-	for col, val := range row {
-		isPK := false
-		for _, pk := range primaryKeys {
-			if col == pk {
-				isPK = true
-				break
-			}
+	var sets []string
+	for _, col := range columns {
+		if pkSet[col] {
+			continue
 		}
-		if !isPK {
-			sets = append(sets, fmt.Sprintf("%s = %s", quoteIdentifier(dbType, col), escapeValue(val)))
+		if val, ok := row[col]; ok {
+			sets = append(sets, fmt.Sprintf("%s = %s", quoteIdentifier(dbType, col), escapeValueForDialect(dbType, val)))
 		}
 	}
 
+	if len(sets) == 0 {
+		return ""
+	}
+
+	var wheres []string
 	for _, pk := range primaryKeys {
-		wheres = append(wheres, fmt.Sprintf("%s = %s", quoteIdentifier(dbType, pk), escapeValue(row[pk])))
+		wheres = append(wheres, fmt.Sprintf("%s = %s", quoteIdentifier(dbType, pk), escapeValueForDialect(dbType, row[pk])))
 	}
 
 	return fmt.Sprintf("UPDATE %s SET %s WHERE %s;",
@@ -540,25 +629,57 @@ func generateUpdateSQL(dbType DBType, tableName string, row map[string]interface
 func generateDeleteSQL(dbType DBType, tableName string, primaryKeys []string, pk map[string]interface{}) string {
 	var wheres []string
 	for _, key := range primaryKeys {
-		wheres = append(wheres, fmt.Sprintf("%s = %s", quoteIdentifier(dbType, key), escapeValue(pk[key])))
+		wheres = append(wheres, fmt.Sprintf("%s = %s", quoteIdentifier(dbType, key), escapeValueForDialect(dbType, pk[key])))
 	}
 	return fmt.Sprintf("DELETE FROM %s WHERE %s;", quoteIdentifier(dbType, tableName), strings.Join(wheres, " AND "))
 }
 
 func escapeValue(val interface{}) string {
+	return escapeValueForDialect(MySQL, val)
+}
+
+func escapeValueForDialect(dbType DBType, val interface{}) string {
 	if val == nil {
 		return "NULL"
 	}
 	switch v := val.(type) {
-	case int, int32, int64, float32, float64:
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
 		return fmt.Sprintf("%v", v)
 	case bool:
+		if dbType == PostgreSQL {
+			if v {
+				return "TRUE"
+			}
+			return "FALSE"
+		}
 		if v {
 			return "1"
 		}
 		return "0"
+	case time.Time:
+		utc := v.UTC()
+		if utc.Nanosecond() > 0 {
+			return fmt.Sprintf("'%s'", utc.Format("2006-01-02 15:04:05.000000"))
+		}
+		return fmt.Sprintf("'%s'", utc.Format("2006-01-02 15:04:05"))
+	case []byte:
+		encoded := hex.EncodeToString(v)
+		switch dbType {
+		case PostgreSQL:
+			return fmt.Sprintf("E'\\\\x%s'", encoded)
+		case SQLServer:
+			return "0x" + encoded
+		default:
+			return fmt.Sprintf("X'%s'", encoded)
+		}
 	default:
 		s := fmt.Sprintf("%v", v)
+		if dbType == MySQL || dbType == "" {
+			s = strings.ReplaceAll(s, "\\", "\\\\")
+			s = strings.ReplaceAll(s, "\x00", "\\0")
+			s = strings.ReplaceAll(s, "\r", "\\r")
+			s = strings.ReplaceAll(s, "\n", "\\n")
+		}
 		s = strings.ReplaceAll(s, "'", "''")
 		return fmt.Sprintf("'%s'", s)
 	}

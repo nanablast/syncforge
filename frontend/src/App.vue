@@ -39,7 +39,7 @@
             {{ t('app.clickToConnect') }}
           </span>
         </template>
-        <button class="btn-settings"></button>
+        <button class="btn-settings" :title="t('app.settings')">⚙</button>
         </div>
       </div>
     </header>
@@ -95,8 +95,8 @@
             <div v-for="(log, i) in schemaLogs" :key="i" class="terminal-line">
               <span class="terminal-prompt">$</span>
               <span class="terminal-text" :class="log.type">{{ log.message }}</span>
-              <span class="terminal-status" v-if="log.type === 'done'"></span>
-              <span class="terminal-status error" v-else-if="log.type === 'error'"></span>
+              <span class="terminal-status" v-if="log.type === 'done'">[OK]</span>
+              <span class="terminal-status error" v-else-if="log.type === 'error'">[ERR]</span>
             </div>
             <div v-if="comparing" class="terminal-line">
               <span class="terminal-prompt">$</span>
@@ -114,7 +114,6 @@
         <DiffResults
           v-if="diffResults.length > 0"
           :results="diffResults"
-          :target-config="targetConfig"
           @execute="executeSQL"
         />
 
@@ -184,7 +183,7 @@
               :databases="sourceDatabases"
               :loading="sourceLoading"
               :connected="sourceConnected"
-              @update:config="sourceConfig = $event"
+              @update:config="handleSourceConfigUpdate"
               @test="testSourceConnection"
               @load-databases="loadSourceDatabases"
               @auto-connect="testSourceConnection"
@@ -198,7 +197,7 @@
               :databases="targetDatabases"
               :loading="targetLoading"
               :connected="targetConnected"
-              @update:config="targetConfig = $event"
+              @update:config="handleTargetConfigUpdate"
               @test="testTargetConnection"
               @load-databases="loadTargetDatabases"
               @auto-connect="testTargetConnection"
@@ -277,7 +276,7 @@ interface UpdateInfo {
 }
 
 // App version and updates
-const appVersion = ref('1.0.0')
+const appVersion = ref('2.0.0')
 const updateInfo = ref<UpdateInfo | null>(null)
 const checkingUpdate = ref(false)
 const showUpdateDialog = ref(false)
@@ -378,25 +377,58 @@ function clearSchemaLogs() {
   currentStep.value = ''
 }
 
+function isConfigReady(config: ConnectionConfig, connected: boolean): boolean {
+  if (!connected) return false
+  if (config.type === 'sqlite') {
+    return Boolean(config.filePath)
+  }
+  return Boolean(config.database)
+}
+
 const canCompare = computed(() => {
-  return sourceConnected.value &&
-         targetConnected.value &&
-         sourceConfig.value.database &&
-         targetConfig.value.database
+  return isConfigReady(sourceConfig.value, sourceConnected.value) &&
+         isConfigReady(targetConfig.value, targetConnected.value)
 })
 
 const bothConnected = computed(() => {
-  return sourceConnected.value &&
-         targetConnected.value &&
-         sourceConfig.value.database &&
-         targetConfig.value.database
+  return isConfigReady(sourceConfig.value, sourceConnected.value) &&
+         isConfigReady(targetConfig.value, targetConnected.value)
 })
+
+function handleSourceConfigUpdate(newConfig: ConnectionConfig) {
+  const endpointChanged =
+    newConfig.type !== sourceConfig.value.type ||
+    newConfig.host !== sourceConfig.value.host ||
+    newConfig.port !== sourceConfig.value.port ||
+    newConfig.user !== sourceConfig.value.user ||
+    newConfig.password !== sourceConfig.value.password ||
+    newConfig.filePath !== sourceConfig.value.filePath
+  sourceConfig.value = newConfig
+  if (endpointChanged) {
+    sourceConnected.value = false
+    sourceDatabases.value = []
+  }
+}
+
+function handleTargetConfigUpdate(newConfig: ConnectionConfig) {
+  const endpointChanged =
+    newConfig.type !== targetConfig.value.type ||
+    newConfig.host !== targetConfig.value.host ||
+    newConfig.port !== targetConfig.value.port ||
+    newConfig.user !== targetConfig.value.user ||
+    newConfig.password !== targetConfig.value.password ||
+    newConfig.filePath !== targetConfig.value.filePath
+  targetConfig.value = newConfig
+  if (endpointChanged) {
+    targetConnected.value = false
+    targetDatabases.value = []
+  }
+}
 
 function formatConnection(config: ConnectionConfig): string {
   if (config.type === 'sqlite') {
-    // 显示文件名
     const path = config.filePath || ''
-    const fileName = path.split('/').pop() || path
+    const fileName = path.split(/[/\\]/).pop() || path
     return fileName || 'SQLite'
   }
   return `${config.host}:${config.port}/${config.database}`
@@ -414,7 +446,7 @@ async function testSourceConnection() {
     sourceConnected.value = true
     await loadSourceDatabases()
   } catch (e: any) {
-    connectionError.value = 'Source connection failed: ' + e
+    connectionError.value = `${t('connection.sourceFailed')}: ${e}`
     sourceConnected.value = false
   } finally {
     sourceLoading.value = false
@@ -437,7 +469,7 @@ async function testTargetConnection() {
     targetConnected.value = true
     await loadTargetDatabases()
   } catch (e: any) {
-    connectionError.value = 'Target connection failed: ' + e
+    connectionError.value = `${t('connection.targetFailed')}: ${e}`
     targetConnected.value = false
   } finally {
     targetLoading.value = false
@@ -460,36 +492,17 @@ async function compareSchemas() {
   startDotAnimation()
 
   try {
-    currentStep.value = 'Initializing comparison'
-    await delay(300)
-    addSchemaLog('Initializing comparison', 'done')
+    addSchemaLog(t('schema.initializing'), 'done')
+    currentStep.value = t('schema.fetchingSource')
 
-    currentStep.value = `Connecting to source: ${sourceConfig.value.database}`
-    await delay(200)
-    addSchemaLog(`Connected to source: ${sourceConfig.value.database}`, 'done')
-
-    currentStep.value = 'Fetching source schema'
-    await delay(200)
-    addSchemaLog('Fetched source schema', 'done')
-
-    currentStep.value = `Connecting to target: ${targetConfig.value.database}`
-    await delay(200)
-    addSchemaLog(`Connected to target: ${targetConfig.value.database}`, 'done')
-
-    currentStep.value = 'Fetching target schema'
-    await delay(200)
-    addSchemaLog('Fetched target schema', 'done')
-
-    currentStep.value = 'Comparing table structures'
     const results = await CompareSchemas(sourceConfig.value, targetConfig.value)
+    addSchemaLog(t('schema.fetchingSource'), 'done')
+
     diffResults.value = results || []
     hasCompared.value = true
 
-    addSchemaLog('Compared table structures', 'done')
-
     const diffCount = results?.length || 0
-    addSchemaLog(`Comparison complete: ${diffCount} difference(s) found`, 'done')
-
+    addSchemaLog(`${t('schema.complete')}: ${diffCount} ${t('schema.differencesFound')}`, 'done')
   } catch (e: any) {
     addSchemaLog(`Error: ${e}`, 'error')
   } finally {
@@ -499,17 +512,13 @@ async function compareSchemas() {
   }
 }
 
-function delay(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
 async function executeSQL(sql: string) {
   try {
     await ExecuteSQL(targetConfig.value, sql)
-    alert('SQL executed successfully!')
+    alert(t('diff.executed'))
     await compareSchemas()
   } catch (e: any) {
-    alert('Execution failed: ' + e)
+    alert(`${t('diff.executeFailed')}: ${e}`)
   }
 }
 
@@ -519,10 +528,10 @@ async function checkForUpdates() {
     const info = await CheckForUpdates()
     updateInfo.value = info as UpdateInfo
     if (!info?.available) {
-      alert('You are running the latest version!')
+      alert(t('update.latestVersion'))
     }
   } catch (e: any) {
-    alert('Failed to check for updates: ' + e)
+    alert(`${t('update.checkFailed')}: ${e}`)
   } finally {
     checkingUpdate.value = false
   }
@@ -534,23 +543,22 @@ async function openDownloadPage() {
       await OpenReleaseURL(updateInfo.value.releaseUrl)
       showUpdateDialog.value = false
     } catch (e: any) {
-      alert('Failed to open download page: ' + e)
+      alert(`${t('update.openFailed')}: ${e}`)
     }
   }
 }
 
 async function applyUpdate() {
   if (!updateInfo.value?.downloadUrl) {
-    alert('No download URL available')
+    alert(t('update.noDownloadUrl'))
     return
   }
 
   isUpdating.value = true
   try {
     await DownloadAndApplyUpdate(updateInfo.value.downloadUrl)
-    // App will restart automatically
   } catch (e: any) {
-    alert('Failed to apply update: ' + e)
+    alert(`${t('update.applyFailed')}: ${e}`)
     isUpdating.value = false
   }
 }

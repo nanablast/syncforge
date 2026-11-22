@@ -21,6 +21,13 @@ type TableDataResult struct {
 
 // GetTableData retrieves paginated table data
 func GetTableData(config ConnectionConfig, tableName string, page, pageSize int) (*TableDataResult, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+
 	db, err := Connect(config)
 	if err != nil {
 		return nil, err
@@ -32,7 +39,6 @@ func GetTableData(config ConnectionConfig, tableName string, page, pageSize int)
 		dbType = MySQL
 	}
 
-	// Get total count
 	var totalCount int
 	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", quoteIdentifier(dbType, tableName))
 	err = db.QueryRow(countQuery).Scan(&totalCount)
@@ -40,34 +46,46 @@ func GetTableData(config ConnectionConfig, tableName string, page, pageSize int)
 		return nil, err
 	}
 
-	// Get columns
 	columns, err := getColumns(db, dbType, config.Database, tableName)
 	if err != nil {
 		return nil, err
 	}
 
-	// Calculate offset
-	offset := (page - 1) * pageSize
-	if offset < 0 {
-		offset = 0
+	if len(columns) == 0 {
+		return &TableDataResult{
+			Columns:    []string{},
+			Rows:       []TableRowData{},
+			TotalCount: totalCount,
+			Page:       page,
+			PageSize:   pageSize,
+		}, nil
 	}
 
-	// Build query with database-specific pagination
+	offset := (page - 1) * pageSize
+
 	quotedCols := make([]string, len(columns))
 	for i, col := range columns {
 		quotedCols[i] = quoteIdentifier(dbType, col)
 	}
 
+	orderCols, _ := getPrimaryKeys(db, dbType, config.Database, tableName)
+	if len(orderCols) == 0 {
+		orderCols = []string{columns[0]}
+	}
+	quotedOrderCols := make([]string, len(orderCols))
+	for i, col := range orderCols {
+		quotedOrderCols[i] = quoteIdentifier(dbType, col)
+	}
+	orderBy := strings.Join(quotedOrderCols, ", ")
+
 	var query string
 	switch dbType {
 	case SQLServer:
-		// SQL Server uses OFFSET FETCH
-		query = fmt.Sprintf("SELECT %s FROM %s ORDER BY (SELECT NULL) OFFSET %d ROWS FETCH NEXT %d ROWS ONLY",
-			strings.Join(quotedCols, ", "), quoteIdentifier(dbType, tableName), offset, pageSize)
+		query = fmt.Sprintf("SELECT %s FROM %s ORDER BY %s OFFSET %d ROWS FETCH NEXT %d ROWS ONLY",
+			strings.Join(quotedCols, ", "), quoteIdentifier(dbType, tableName), orderBy, offset, pageSize)
 	default:
-		// MySQL, PostgreSQL, SQLite use LIMIT OFFSET
-		query = fmt.Sprintf("SELECT %s FROM %s LIMIT %d OFFSET %d",
-			strings.Join(quotedCols, ", "), quoteIdentifier(dbType, tableName), pageSize, offset)
+		query = fmt.Sprintf("SELECT %s FROM %s ORDER BY %s LIMIT %d OFFSET %d",
+			strings.Join(quotedCols, ", "), quoteIdentifier(dbType, tableName), orderBy, pageSize, offset)
 	}
 
 	rows, err := db.Query(query)
@@ -88,16 +106,19 @@ func GetTableData(config ConnectionConfig, tableName string, page, pageSize int)
 			return nil, err
 		}
 
-		rowData := TableRowData{Values: make(map[string]interface{})}
+		rowData := TableRowData{Values: make(map[string]interface{}, len(columns))}
 		for i, col := range columns {
-			val := values[i]
-			if b, ok := val.([]byte); ok {
-				rowData.Values[col] = string(b)
+			norm := normalizeScannedValue(values[i])
+			if b, ok := norm.([]byte); ok {
+				rowData.Values[col] = fmt.Sprintf("<BLOB %d bytes>", len(b))
 			} else {
-				rowData.Values[col] = val
+				rowData.Values[col] = norm
 			}
 		}
 		resultRows = append(resultRows, rowData)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return &TableDataResult{

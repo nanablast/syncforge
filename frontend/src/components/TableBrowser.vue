@@ -210,15 +210,28 @@ const currentPage = ref(1)
 const pageSize = 50
 
 // Computed
-const totalPages = computed(() => {
-  if (!tableData.value) return 1
-  return Math.ceil(tableData.value.totalCount / pageSize)
+const isSourceReady = computed(() => {
+  if (!props.connected) return false
+  if (props.config.type === 'sqlite') {
+    return Boolean(props.config.filePath)
+  }
+  return Boolean(props.config.database)
 })
 
-// Watch for config changes
-watch(() => props.config.database, () => {
-  if (props.connected && props.config.database) {
+const totalPages = computed(() => {
+  if (!tableData.value) return 1
+  return Math.max(1, Math.ceil(tableData.value.totalCount / pageSize))
+})
+
+// Watch for connection / database changes
+watch([isSourceReady, () => props.config.database, () => props.config.filePath], ([ready]) => {
+  selectedTable.value = null
+  tableStructure.value = null
+  tableData.value = null
+  if (ready) {
     loadTables()
+  } else {
+    tables.value = []
   }
 })
 
@@ -227,7 +240,7 @@ watch(() => props.browserTarget, () => {
   selectedTable.value = null
   tableStructure.value = null
   tableData.value = null
-  if (props.connected && props.config.database) {
+  if (isSourceReady.value) {
     loadTables()
   } else {
     tables.value = []
@@ -236,7 +249,7 @@ watch(() => props.browserTarget, () => {
 
 // Methods
 async function loadTables() {
-  if (!props.connected || !props.config.database) {
+  if (!isSourceReady.value) {
     tables.value = []
     return
   }
@@ -291,7 +304,7 @@ function formatValue(val: any): string {
 }
 
 // Initial load
-if (props.connected && props.config.database) {
+if (isSourceReady.value) {
   loadTables()
 }
 </script>

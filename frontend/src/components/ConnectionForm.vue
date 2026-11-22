@@ -130,7 +130,7 @@
             <label>{{ t('connection.databaseName') }}</label>
             <input type="text" v-model="newDbName" placeholder="new_database" />
           </div>
-          <div class="form-group">
+          <div class="form-group" v-if="!config.type || config.type === 'mysql'">
             <label>{{ t('connection.charset') }}</label>
             <select v-model="newDbCharset">
               <option value="utf8mb4">utf8mb4</option>
@@ -139,7 +139,7 @@
               <option value="gbk">gbk</option>
             </select>
           </div>
-          <div class="form-group">
+          <div class="form-group" v-if="!config.type || config.type === 'mysql'">
             <label>{{ t('connection.collation') }}</label>
             <select v-model="newDbCollation">
               <option value="utf8mb4_unicode_ci">utf8mb4_unicode_ci</option>
@@ -263,7 +263,7 @@ async function saveConnection() {
     showSaveDialog.value = false
     saveConnName.value = ''
   } catch (e: any) {
-    alert('Failed to save connection: ' + e)
+    alert(`${t('connection.saveFailed')}: ${e}`)
   }
 }
 
@@ -274,7 +274,7 @@ async function deleteSelectedConnection() {
     await loadSavedConnections()
     selectedSaved.value = ''
   } catch (e: any) {
-    alert('Failed to delete connection: ' + e)
+    alert(`${t('connection.deleteFailed')}: ${e}`)
   }
 }
 
@@ -293,19 +293,21 @@ function getDefaultPort(): number {
 
 function updateDbType(type: string) {
   const newConfig = { ...props.config, type }
-  // Update default port when type changes
   switch (type) {
     case 'postgresql':
       newConfig.port = 5432
+      if (newConfig.database === 'main') newConfig.database = ''
       break
     case 'sqlserver':
       newConfig.port = 1433
+      if (newConfig.database === 'main') newConfig.database = ''
       break
     case 'mysql':
       newConfig.port = 3306
+      if (newConfig.database === 'main') newConfig.database = ''
       break
     case 'sqlite':
-      // SQLite doesn't need port
+      newConfig.database = 'main'
       break
   }
   emit('update:config', newConfig)
@@ -317,15 +319,14 @@ async function createDatabase() {
   creating.value = true
   try {
     await CreateDatabase(props.config, newDbName.value, newDbCharset.value, newDbCollation.value)
-    alert(`Database "${newDbName.value}" created successfully!`)
+    alert(t('connection.dbCreated', { name: newDbName.value }))
     emit('database-created', newDbName.value)
     emit('load-databases')
-    // Auto-select the new database
     emit('update:config', { ...props.config, database: newDbName.value })
     showCreateDialog.value = false
     newDbName.value = ''
   } catch (e: any) {
-    alert('Failed to create database: ' + e)
+    alert(`${t('connection.createFailed')}: ${e}`)
   } finally {
     creating.value = false
   }

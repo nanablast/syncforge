@@ -4,7 +4,8 @@ export default {
     checkUpdates: '检查更新',
     checking: '检查中...',
     updateAvailable: '有新版本',
-    clickToConnect: '点击连接'
+    clickToConnect: '点击连接',
+    settings: '连接设置'
   },
   tabs: {
     schemaCompare: '结构对比',
@@ -40,7 +41,13 @@ export default {
     charset: '字符集',
     collation: '排序规则',
     create: '创建',
-    creating: '创建中...'
+    creating: '创建中...',
+    sourceFailed: '源数据库连接失败',
+    targetFailed: '目标数据库连接失败',
+    saveFailed: '保存连接失败',
+    deleteFailed: '删除连接失败',
+    dbCreated: '数据库 "{name}" 创建成功！',
+    createFailed: '创建数据库失败'
   },
   schema: {
     compare: '对比结构',
@@ -49,7 +56,7 @@ export default {
     connectBoth: '请连接两个数据库以进行结构对比',
     initializing: '初始化对比',
     connectingSource: '连接源数据库',
-    fetchingSource: '获取源数据库结构',
+    fetchingSource: '获取源库与目标库结构',
     connectingTarget: '连接目标数据库',
     fetchingTarget: '获取目标数据库结构',
     comparingTables: '对比表结构',
@@ -58,6 +65,20 @@ export default {
   },
   diff: {
     title: '结构差异',
+    differencesFound: '发现差异（{count}）',
+    copyAll: '复制全部 SQL',
+    copied: '已复制！',
+    executeAll: '全部执行',
+    copy: '复制',
+    run: '执行',
+    completeScript: '完整迁移脚本',
+    confirmTitle: '确认执行',
+    confirmMsg: '确定要在目标数据库执行全部 {count} 条 SQL 语句吗？',
+    cancel: '取消',
+    execute: '执行',
+    addBadge: '+ 新增',
+    dropBadge: '- 删除',
+    modifyBadge: '~ 修改',
     added: '新增',
     removed: '删除',
     modified: '修改',
@@ -77,6 +98,7 @@ export default {
     selectAll: '全选',
     compare: '对比',
     comparing: '对比中...',
+    executing: '同步中...',
     tables: '个表',
     selected: '已选',
     clearAll: '清空',
@@ -98,6 +120,8 @@ export default {
     connectFirst: '请先连接源数据库',
     failedLoadTables: '加载表失败',
     copiedSQL: '已复制 {count} 条 SQL 语句',
+    syncSuccess: '数据同步执行成功！',
+    syncFailed: '数据同步失败',
     noPK: '无主键',
     pk: '主键',
     rows: '行',
@@ -144,7 +168,12 @@ export default {
     later: '稍后',
     viewRelease: '查看发布',
     install: '安装更新',
-    updating: '更新中...'
+    updating: '更新中...',
+    latestVersion: '当前已是最新版本！',
+    checkFailed: '检查更新失败',
+    openFailed: '打开下载页面失败',
+    noDownloadUrl: '未找到下载链接',
+    applyFailed: '应用更新失败'
   },
   language: {
     en: 'English',
