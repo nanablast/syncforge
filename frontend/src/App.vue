@@ -276,7 +276,7 @@ interface UpdateInfo {
 }
 
 // App version and updates
-const appVersion = ref('2.0.0')
+const appVersion = ref('2.0.1')
 const updateInfo = ref<UpdateInfo | null>(null)
 const checkingUpdate = ref(false)
 const showUpdateDialog = ref(false)
