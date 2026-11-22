@@ -38,7 +38,9 @@ jobs:
         run: npm ci
 
       - name: Generate Wails bindings, type-check & build app
-        run: "$(go env GOPATH)/bin/wails" build -nopackage -tags webkit2_41
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          wails build -nopackage -tags webkit2_41
 
       - name: Verify go vet & unit tests
         run: |
